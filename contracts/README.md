@@ -22,14 +22,19 @@ ZionDefi is a QR + NFC payment method that deploys per-user smart QR ("cards") v
   - [Deploy a Card](#deploy-a-card)
   - [Configure Card Settings](#configure-card-settings)
   - [Deposit Funds](#deposit-funds)
+  - [Sync Balances & Auto-Swap](#sync-balances--auto-swap)
   - [Get Balance Summary](#get-balance-summary)
   - [Submit a Payment Request](#submit-a-payment-request)
   - [Approve a Payment Request](#approve-a-payment-request)
+  - [AVNU Integration — Building the OffchainQuote](#avnu-integration--building-the-offchainquote)
   - [Charge a Card](#charge-a-card)
   - [Manual Token Swap](#manual-token-swap)
   - [Freeze / Unfreeze Card](#freeze--unfreeze-card)
 - [Access Control Summary](#access-control-summary)
 - [Key Constants](#key-constants)
+- [Payment Lifecycle](#payment-lifecycle)
+- [Security Features](#security-features)
+- [AVNU Route Format — Technical Details](#avnu-route-format--technical-details)
 - [License](#license)
 
 ---
@@ -58,9 +63,9 @@ ZionDefi is a QR + NFC payment method that deploys per-user smart QR ("cards") v
 ```
 
 **Dependencies:**
-- OpenZeppelin Cairo Contracts v3.0.0
-- Pragma Oracle (pragma_lib 0.2.0) — token↔USD price feeds
-- AVNU Exchange Router — on-chain swap execution
+- OpenZeppelin Cairo Contracts v0.19.0 (access, security, token, upgrades)
+- Pragma Oracle (pragma_lib tag 2.8.2) — token↔USD price feeds
+- AVNU Exchange v2 — on-chain multi-route swap execution (called via `call_contract_syscall`)
 
 ---
 
@@ -70,7 +75,7 @@ ZionDefi is a QR + NFC payment method that deploys per-user smart QR ("cards") v
 |---|---|---|
 | **ZionDefiFactory** | `src/ZionDefiFactory.cairo` | Singleton factory — deploys cards, protocol config, merchant registry |
 | **ZionDefiCard** | `src/ZionDefiCard.cairo` | Per-user smart wallet with payments, swaps, PIN auth |
-| **Interfaces** | `src/interfaces.cairo` | All trait definitions (`IZionDefiCard`, `IZionDefiFactory`, `IZorahAVNURouter`) |
+| **Interfaces** | `src/interfaces.cairo` | All trait definitions (`IZionDefiCard`, `IZionDefiFactory`) |
 | **Types** | `src/types.cairo` | Shared structs, enums, and constants |
 | **Helpers** | `src/helpers.cairo` | Utility functions |
 | **Price Oracle** | `src/Price_Oracle.cairo` | Pragma Oracle integration for token↔USD conversion |
@@ -347,16 +352,41 @@ const depositAmount = uint256.bnToUint256(100000000000000000n); // 0.1 ETH
 // 1. Approve the card to pull tokens
 await ethContract.invoke("approve", [CARD_ADDRESS, depositAmount]);
 
-// 2. Deposit without auto-swap (Option::None for quote)
+// 2. Deposit — signature: deposit_funds(token, amount)
 await card.invoke("deposit_funds", [
   ETH_ADDRESS,                // token
   depositAmount,              // amount
-  { variant: { None: {} } },  // quote (Option::None — no swap)
-  0,                          // slippage_tolerance_bps (unused when no quote)
 ]);
 
 console.log("Deposit complete.");
-console.log("First deposit auto-pays the deployment fee and activates the card.");
+console.log("First deposit auto-pays the deployment fee ($2) and activates the card.");
+// If an auto-swap rule exists (e.g., ETH → USDC), the relayer will execute
+// it separately via execute_auto_swap() after seeing the deposit event.
+```
+
+### Sync Balances & Auto-Swap
+
+`sync_balances` reconciles on-chain ERC-20 balances with the card's internal ledger (e.g., tokens sent directly to the card address). It does **not** perform swaps — the relayer handles swaps separately.
+
+```js
+// Step 1: Relayer calls sync_balances to update tracked balances
+await card.invoke("sync_balances", [
+  [ETH_ADDRESS, USDC_ADDRESS],  // tokens to sync
+]);
+
+// Step 2: Relayer reads on-chain balances and auto-swap rules, then for each
+// token with a surplus that has an auto-swap rule, gets an AVNU quote and
+// calls execute_auto_swap individually (or in a multicall).
+// See the "AVNU Integration" section below for how to build the OffchainQuote.
+
+const { sigR, sigS } = signPin();
+await card.invoke("execute_auto_swap", [
+  ETH_ADDRESS,                    // source_token
+  uint256.bnToUint256(surplus),   // amount to swap
+  offchainQuote,                  // OffchainQuote (see AVNU section below)
+  300,                            // slippage_tolerance_bps (3%)
+  sigR, sigS,
+]);
 ```
 
 ### Get Balance Summary
@@ -453,12 +483,104 @@ const details = await card.call("get_request_details", [requestId]);
 console.log("Request:", details);
 ```
 
+### AVNU Integration — Building the OffchainQuote
+
+The contract uses **pre-serialized AVNU route data** (`Span<felt252>`) instead of typed Route structs. This avoids replicating AVNU's complex type hierarchy and guarantees wire-format compatibility.
+
+**Relayer workflow:**
+
+```
+1. GET  /swap/v3/quotes   → get quote (quoteId, fee info, routing preview)
+2. POST /swap/v3/build    → get serialized calldata (the actual on-chain data)
+3. Extract routes from the build calldata
+4. Construct OffchainQuote and call the card contract
+```
+
+```js
+const AVNU_API = "https://starknet.api.avnu.fi";
+
+/**
+ * Build an OffchainQuote from an AVNU quote for the ZionDefi contract.
+ *
+ * @param {string} sellToken  - sell token address (hex)
+ * @param {string} buyToken   - buy token address (hex)
+ * @param {string} sellAmount - sell amount in hex (e.g., "0x2386f26fc10000")
+ * @param {string} takerAddress - the card contract address (taker = card)
+ * @returns {Object} { offchainQuote, quoteId }
+ */
+async function buildOffchainQuote(sellToken, buyToken, sellAmount, takerAddress) {
+  // ── Step 1: Get quotes ──────────────────────────────────────────
+  const quoteRes = await fetch(
+    `${AVNU_API}/swap/v3/quotes?` +
+    `sellTokenAddress=${sellToken}` +
+    `&buyTokenAddress=${buyToken}` +
+    `&sellAmount=${sellAmount}` +
+    `&takerAddress=${takerAddress}`
+  );
+  const quotes = await quoteRes.json();
+  const quote = quotes[0]; // best quote
+
+  // ── Step 2: Build swap calldata ─────────────────────────────────
+  const buildRes = await fetch(`${AVNU_API}/swap/v3/build`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      quoteId: quote.quoteId,
+      takerAddress,
+      slippage: 0.03,        // 3% — used by AVNU to compute min_buy
+      includeApprove: false,  // card handles approve internally
+    }),
+  });
+  const buildResult = await buildRes.json();
+
+  // ── Step 3: Extract routes from the multi_route_swap calldata ───
+  // The build response returns calls[]. Find the swap call:
+  const swapCall = buildResult.calls.find(
+    (c) => c.entrypoint === "multi_route_swap"
+  );
+  if (!swapCall) throw new Error("No multi_route_swap call in build response");
+
+  // multi_route_swap calldata layout (felt252 elements):
+  //   [0]     sell_token_address
+  //   [1..2]  sell_token_amount (u256 = low, high)
+  //   [3]     buy_token_address
+  //   [4..5]  buy_token_amount (u256)
+  //   [6..7]  buy_token_min_amount (u256)
+  //   [8]     beneficiary
+  //   [9]     integrator_fee_amount_bps (u128)
+  //   [10]    integrator_fee_recipient
+  //   [11..]  routes (pre-serialized Array<Route> with length prefix)
+  const calldata = swapCall.calldata;
+  const routesFelts = calldata.slice(11); // everything from index 11 onward
+
+  // ── Step 4: Construct the OffchainQuote struct ──────────────────
+  const offchainQuote = {
+    sell_token_address: sellToken,
+    buy_token_address: buyToken,
+    sell_amount: uint256.bnToUint256(BigInt(quote.sellAmount)),
+    buy_amount: uint256.bnToUint256(BigInt(quote.buyAmount)),
+    price_impact: uint256.bnToUint256(0n),
+    fee: {
+      fee_token: quote.fee.feeToken,
+      avnu_fees: uint256.bnToUint256(BigInt(quote.fee.avnuFees)),
+      avnu_fees_bps: BigInt(quote.fee.avnuFeesBps),
+      integrator_fees: uint256.bnToUint256(BigInt(quote.fee.integratorFees)),
+      integrator_fees_bps: BigInt(quote.fee.integratorFeesBps),
+    },
+    routes: routesFelts, // Span<felt252> — pre-serialized AVNU routes
+  };
+
+  return { offchainQuote, quoteId: quote.quoteId };
+}
+```
+
 ### Charge a Card
 
 After approval, the merchant or relayer executes the charge:
 
 ```js
-// Direct charge (no swap needed — card holds the merchant's requested token)
+// ── Direct charge (no swap — card holds the exact token the merchant wants) ──
+
 await card.invoke("charge_card", [
   1,                           // request_id
   "0x1234ABCD",               // idempotency_key (unique felt252, prevents double-charge)
@@ -468,43 +590,47 @@ await card.invoke("charge_card", [
   Math.floor(Date.now() / 1000) + 3600, // deadline (1 hour from now)
 ]);
 console.log("Card charged (direct). Settlement delay applies.");
+```
 
-// ---
+```js
+// ── Charge WITH swap (card holds ETH, merchant wants USDC) ───────────────────
+// The relayer:
+//   1. Reads the payment request to get merchant's token + amount
+//   2. Determines the source token from the card's balances
+//   3. Calls AVNU API to get a quote + build calldata
+//   4. Extracts pre-serialized routes and constructs OffchainQuote
+//   5. Calls charge_card with the quote
 
-// Charge WITH swap (card holds ETH, merchant wants USDC)
-// The relayer fetches an AVNU quote off-chain, then submits:
-const avnuQuote = {
-  sell_token_address: ETH_ADDRESS,
-  buy_token_address: USDC_ADDRESS,
-  sell_amount: uint256.bnToUint256(50000000000000000n), // 0.05 ETH
-  buy_amount: uint256.bnToUint256(25_000000n),          // ~25 USDC expected
-  price_impact: uint256.bnToUint256(0n),
-  fee: {
-    fee_token: ETH_ADDRESS,
-    avnu_fees: uint256.bnToUint256(0n),
-    avnu_fees_bps: 0,
-    integrator_fees: uint256.bnToUint256(0n),
-    integrator_fees_bps: 0,
-  },
-  routes: [], // populated from AVNU API response
-};
+// 1. Read the approved request details
+const request = await card.call("get_request_details", [2]);
+// request.token = USDC, request.amount = 25_000000, request.merchant = 0x...
 
+// 2. Build the AVNU quote (relayer knows card holds ETH)
+const { offchainQuote } = await buildOffchainQuote(
+  ETH_ADDRESS,                              // sell (what card holds)
+  request.token,                            // buy (what merchant wants)
+  "0x" + (50000000000000000n).toString(16), // sell amount (~0.05 ETH)
+  CARD_ADDRESS,                             // taker = card contract
+);
+
+// 3. Execute the charge with the swap quote
 await card.invoke("charge_card", [
-  2,                                      // request_id
-  "0x5678EFAB",                           // idempotency_key
-  1800,                                   // settlement_delay_seconds (30 min)
-  { variant: { Some: avnuQuote } },       // quote for swap
-  300,                                    // slippage_tolerance_bps (3%)
-  Math.floor(Date.now() / 1000) + 3600,  // deadline
+  2,                                          // request_id
+  "0x5678EFAB",                               // idempotency_key
+  1800,                                       // settlement_delay_seconds (30 min)
+  { variant: { Some: offchainQuote } },       // quote for swap
+  300,                                        // slippage_tolerance_bps (3%)
+  Math.floor(Date.now() / 1000) + 3600,      // deadline
 ]);
+console.log("Card charged (with swap). Settlement in 30 min.");
 
-// Process settlement after delay expires
+// ── Process settlement after delay expires ───────────────────────────────────
 await card.invoke("process_settlement", [
   2,                 // request_id
   "0xSETTLE_KEY_1",  // idempotency_key (different from charge key)
 ]);
 
-// Or cancel settlement during delay (owner/relayer only, PIN required)
+// ── Or cancel settlement during delay (owner/relayer only, PIN required) ─────
 const { sigR, sigS } = signPin();
 await card.invoke("cancel_settlement", [2, sigR, sigS]);
 ```
@@ -514,36 +640,46 @@ await card.invoke("cancel_settlement", [2, sigR, sigS]);
 ```js
 const { sigR, sigS } = signPin();
 
-// Fetch quote from AVNU API, then execute on-chain swap
-const swapQuote = {
-  sell_token_address: ETH_ADDRESS,
-  buy_token_address: USDC_ADDRESS,
-  sell_amount: uint256.bnToUint256(100000000000000000n), // 0.1 ETH
-  buy_amount: uint256.bnToUint256(50_000000n),           // ~50 USDC
-  price_impact: uint256.bnToUint256(0n),
-  fee: {
-    fee_token: ETH_ADDRESS,
-    avnu_fees: uint256.bnToUint256(0n),
-    avnu_fees_bps: 0,
-    integrator_fees: uint256.bnToUint256(0n),
-    integrator_fees_bps: 0,
-  },
-  routes: [], // from AVNU API
-};
+// 1. Build an AVNU quote for the swap
+const sellAmountRaw = 100000000000000000n; // 0.1 ETH
+const { offchainQuote } = await buildOffchainQuote(
+  ETH_ADDRESS,
+  USDC_ADDRESS,
+  "0x" + sellAmountRaw.toString(16),
+  CARD_ADDRESS,
+);
 
+// 2. Execute the swap on-chain
 await card.invoke("swap_tokens", [
   ETH_ADDRESS,                                    // sell_token
   USDC_ADDRESS,                                   // buy_token
-  uint256.bnToUint256(100000000000000000n),        // sell_amount
-  swapQuote,                                      // quote
+  uint256.bnToUint256(sellAmountRaw),             // sell_amount
+  offchainQuote,                                  // OffchainQuote (with pre-serialized routes)
   300,                                            // slippage_tolerance_bps (3%)
   sigR, sigS,
 ]);
 console.log("Swap executed: ETH → USDC");
 
-// Configure auto-swap: automatically convert ETH deposits to USDC
+// ── Auto-swap management ─────────────────────────────────────────────────────
+
+// Configure auto-swap: ETH deposits will be swapped to USDC by the relayer
 await card.invoke("set_auto_swap", [ETH_ADDRESS, USDC_ADDRESS, sigR, sigS]);
-console.log("Auto-swap configured: future ETH deposits will swap to USDC");
+console.log("Auto-swap configured: ETH → USDC");
+
+// Execute an auto-swap (relayer-initiated after deposit/sync)
+const { offchainQuote: autoQuote } = await buildOffchainQuote(
+  ETH_ADDRESS,
+  USDC_ADDRESS,
+  "0x" + ethSurplus.toString(16),
+  CARD_ADDRESS,
+);
+await card.invoke("execute_auto_swap", [
+  ETH_ADDRESS,                            // source_token
+  uint256.bnToUint256(ethSurplus),        // amount
+  autoQuote,                              // OffchainQuote
+  300,                                    // slippage_tolerance_bps (3%)
+  sigR, sigS,
+]);
 
 // Remove auto-swap rule
 await card.invoke("remove_auto_swap", [ETH_ADDRESS, sigR, sigS]);
@@ -581,7 +717,7 @@ console.log("Card burned — all remaining balances sent to owner");
 | **Charge Card** | ✅ | ✅ | ✅ | ❌ |
 | **Deposit Funds** | anyone | anyone | anyone | anyone |
 | **Withdraw Funds** | ✅ | ❌ | ❌ | ❌ |
-| **Sync Balances** | ✅ | ✅ | ❌ | ❌ |
+| **Sync Balances** | ✅ (no PIN) | ✅ (no PIN) | ❌ | ❌ |
 | **Swap Tokens / Auto-Swap** | ✅ | ✅ | ❌ | ❌ |
 | **Freeze Card** | ✅ | ✅ | ❌ | ❌ |
 | **Unfreeze Card** | ✅ | ❌ | ❌ | ❌ |
@@ -656,6 +792,62 @@ Merchant → submit_payment_request()
 - **Settlement Delays** — Configurable hold period before merchant receives funds; owner can cancel during delay.
 - **Rate Limiting** — Per-merchant request limits, per-card approval limits, charge cooldowns.
 - **Deployment Fee as Debt** — Card starts in `PendingActivation`; fee auto-deducted from first deposit. No operations (except deposit) until activated.
+
+---
+
+## AVNU Route Format — Technical Details
+
+The contract does **not** define AVNU's `Route` / `RouteSwap` types locally. Instead, routes are passed as raw `Span<felt252>` — pre-serialized calldata obtained from the AVNU Build API.
+
+### Why raw felt252 instead of typed structs?
+
+AVNU v2's on-chain `Route` struct uses a complex enum (`RouteSwap`) with custom `Serde` and a branch marker (`0x6272616e6368`). Replicating this in ZionDefi would:
+- Tightly couple the contract to a specific AVNU version
+- Risk ABI encoding mismatches that would **lose user funds**
+- Inflate CASM bytecode (Starknet has an 81,920 felt limit per contract)
+
+By using `call_contract_syscall` with pre-serialized routes, the contract is version-agnostic and encoding is always correct.
+
+### OffchainQuote → on-chain calldata mapping
+
+```
+OffchainQuote (Cairo struct)         multi_route_swap calldata (felt252[])
+─────────────────────────────        ──────────────────────────────────────
+sell_token_address          ──→      calldata[0]
+sell_amount (u256)          ──→      calldata[1..2] (low, high)
+buy_token_address           ──→      calldata[3]
+buy_amount (u256)           ──→      calldata[4..5]
+(min_buy — computed on-chain)──→     calldata[6..7]
+(beneficiary — card address) ──→     calldata[8]
+fee.integrator_fees_bps     ──→      calldata[9]
+(zero address)              ──→      calldata[10]
+routes (Span<felt252>)      ──→      calldata[11..N] (spliced verbatim)
+```
+
+### Relayer flow diagram
+
+```
+┌─────────┐   GET /swap/v3/quotes     ┌──────────┐
+│ Relayer │ ─────────────────────────→ │ AVNU API │
+│         │ ←───────────────────────── │          │
+│         │   { quoteId, fee, ... }   │          │
+│         │                           │          │
+│         │   POST /swap/v3/build     │          │
+│         │ ─────────────────────────→ │          │
+│         │ ←───────────────────────── │          │
+│         │   { calls: [{ calldata }] }          │
+└────┬────┘                           └──────────┘
+     │
+     │  Extract calldata[11..N] as routes
+     │  Construct OffchainQuote { ..., routes }
+     │
+     ▼
+┌──────────────────┐
+│  ZionDefiCard    │  _do_swap() builds its own calldata
+│  (on-chain)      │  and splices routes verbatim,
+│                  │  then calls AVNU via syscall
+└──────────────────┘
+```
 
 ---
 

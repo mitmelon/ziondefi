@@ -624,8 +624,6 @@ mod ZionDefiCard {
             ref self: ContractState,
             token: ContractAddress,
             amount: u256,
-            quote: Option<OffchainQuote>,
-            slippage_tolerance_bps: u16,
         ) {
             self.reentrancy.start();
             let status = self.status.read();
@@ -661,31 +659,6 @@ mod ZionDefiCard {
                 }
             }
 
-            if remaining > 0 && self.autoswap_enabled.entry(token).read() {
-                let target_token = self.autoswap_target.entry(token).read();
-                match quote {
-                    Option::Some(q) => {
-                        assert(!target_token.is_zero(), 'Invalid swap target');
-                        assert(slippage_tolerance_bps <= MAX_SLIPPAGE, 'Slippage too high');
-                        assert(q.sell_token_address == token, 'Quote sell mismatch');
-                        assert(q.buy_token_address == target_token, 'Quote buy mismatch');
-                        assert(q.sell_amount >= remaining, 'Quote sell < remaining');
-                        let sell_amount = remaining;
-                        let config = factory.get_protocol_config();
-                        let min_out = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-                        let credited = self._do_swap(config.avnu_router, token, target_token, sell_amount, q.buy_amount, min_out, q.fee.integrator_fees_bps, q.routes);
-                        let tracked = self.token_balances.entry(target_token).read();
-                        self.token_balances.entry(target_token).write(tracked + credited);
-                        let ts = get_block_timestamp();
-                        self.emit(SwapExecuted { token_in: token, token_out: target_token, amount_in: sell_amount, amount_out: credited, timestamp: ts });
-                        self.emit(FundsDeposited { token: target_token, amount: credited, depositor: caller, timestamp: ts });
-                        self.reentrancy.end();
-                        return;
-                    },
-                    Option::None => {},
-                }
-            }
-
             if remaining > 0 {
                 let bal = self.token_balances.entry(token).read();
                 self.token_balances.entry(token).write(bal + remaining);
@@ -711,12 +684,9 @@ mod ZionDefiCard {
         fn sync_balances(
             ref self: ContractState,
             tokens: Span<ContractAddress>,
-            quotes: Span<Option<OffchainQuote>>,
-            slippage_tolerance_bps: u16,
         ) {
             self.reentrancy.start();
             self._assert_owner_or_relayer();
-            assert(tokens.len() == quotes.len(), 'Length mismatch');
             let card = get_contract_address();
             let ts = get_block_timestamp();
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
@@ -730,8 +700,9 @@ mod ZionDefiCard {
                 let tracked = self.token_balances.entry(token).read();
 
                 if actual > tracked {
-                    let mut surplus = actual - tracked;
+                    let surplus = actual - tracked;
 
+                    // Handle deployment fee from untracked deposits
                     if !self.deployment_fee_paid.read() {
                         let fee_usd = self.deployment_fee_usd.read();
                         if fee_usd > 0 {
@@ -744,39 +715,12 @@ mod ZionDefiCard {
                                     self.emit(DeploymentFeePaid { token, amount_in_token: fee_in_token, fee_usd, timestamp: ts });
                                     self.status.write(CardStatus::Active);
                                     self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
-                                    surplus = d.balance_of(card) - tracked;
                                 }
                             }
                         }
                     }
 
-                    if surplus > 0 && self.autoswap_enabled.entry(token).read() {
-                        let target_token = self.autoswap_target.entry(token).read();
-                        let q_opt = *quotes.at(i);
-                        match q_opt {
-                            Option::Some(q) => {
-                                if !target_token.is_zero() {
-                                    assert(slippage_tolerance_bps <= MAX_SLIPPAGE, 'Slippage too high');
-                                    assert(q.sell_token_address == token, 'Quote sell mismatch');
-                                    assert(q.buy_token_address == target_token, 'Quote buy mismatch');
-                                    assert(q.sell_amount >= surplus, 'Quote sell < surplus');
-                                    let config = factory.get_protocol_config();
-                                    let min_out = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-                                    let credited = self._do_swap(config.avnu_router, token, target_token, surplus, q.buy_amount, min_out, q.fee.integrator_fees_bps, q.routes);
-                                    let tgt_bal = self.token_balances.entry(target_token).read();
-                                    self.token_balances.entry(target_token).write(tgt_bal + credited);
-                                    self.emit(SwapExecuted { token_in: token, token_out: target_token, amount_in: surplus, amount_out: credited, timestamp: ts });
-                                    let new_actual = d.balance_of(card);
-                                    self.token_balances.entry(token).write(new_actual);
-                                    self.last_balance_sync.entry(token).write(ts);
-                                    i += 1;
-                                    continue;
-                                }
-                            },
-                            Option::None => {},
-                        }
-                    }
-
+                    // Update tracked to actual (after any deployment fee deduction)
                     let new_actual = d.balance_of(card);
                     self.token_balances.entry(token).write(new_actual);
                 } else {
