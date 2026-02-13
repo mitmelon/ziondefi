@@ -20,7 +20,7 @@ pub trait IPinComponent<TContractState> {
 #[starknet::component]
 pub mod PinComponent {
     use starknet::{ContractAddress, get_caller_address};
-    use starknet::storage::{Map, StoragePointerReadAccess, StoragePointerWriteAccess};
+    use starknet::storage::{Map, StoragePointerReadAccess, StoragePointerWriteAccess, StoragePathEntry};
     use core::ecdsa::check_ecdsa_signature;
     use core::poseidon::poseidon_hash_span;
 
@@ -80,9 +80,9 @@ pub mod PinComponent {
 
         fn register_pin(ref self: ComponentState<TContractState>, public_key: felt252) {
             let caller = get_caller_address();
-            let current_key = self.pin_user_keys.read(caller);
+            let current_key = self.pin_user_keys.entry(caller).read();
             assert(current_key == 0, 'PIN already registered');
-            self.pin_user_keys.write(caller, public_key);
+            self.pin_user_keys.entry(caller).write(public_key);
             self.emit(PinRegistered { user: caller, public_key });
         }
 
@@ -93,10 +93,10 @@ pub mod PinComponent {
             signature_s: felt252,
         ) {
             let caller = get_caller_address();
-            let old_pub_key = self.pin_user_keys.read(caller);
+            let old_pub_key = self.pin_user_keys.entry(caller).read();
             assert(old_pub_key != 0, 'PIN not registered');
 
-            let nonce = self.pin_user_nonces.read(caller);
+            let nonce = self.pin_user_nonces.entry(caller).read();
 
             // Message = Hash('ROTATE', new_key, nonce)
             let mut hash_input = ArrayTrait::new();
@@ -108,8 +108,8 @@ pub mod PinComponent {
             let valid = check_ecdsa_signature(message_hash, old_pub_key, signature_r, signature_s);
             assert(valid, 'Invalid rotation signature');
 
-            self.pin_user_keys.write(caller, new_public_key);
-            self.pin_user_nonces.write(caller, nonce + 1);
+            self.pin_user_keys.entry(caller).write(new_public_key);
+            self.pin_user_nonces.entry(caller).write(nonce + 1);
             self.emit(PinRotated { user: caller, new_public_key });
         }
 
@@ -119,10 +119,10 @@ pub mod PinComponent {
             signature_r: felt252,
             signature_s: felt252,
         ) {
-            let stored_pub_key = self.pin_user_keys.read(user);
+            let stored_pub_key = self.pin_user_keys.entry(user).read();
             assert(stored_pub_key != 0, 'PIN not registered');
 
-            let nonce = self.pin_user_nonces.read(user);
+            let nonce = self.pin_user_nonces.entry(user).read();
 
             // Message = Hash('VERIFY', nonce)
             let mut hash_input = ArrayTrait::new();
@@ -134,16 +134,16 @@ pub mod PinComponent {
             assert(valid, 'Invalid PIN signature');
 
             // Increment nonce to prevent replay
-            self.pin_user_nonces.write(user, nonce + 1);
+            self.pin_user_nonces.entry(user).write(nonce + 1);
             self.emit(PinVerified { user, nonce_used: nonce });
         }
 
         fn get_pin_public_key(self: @ComponentState<TContractState>, user: ContractAddress) -> felt252 {
-            self.pin_user_keys.read(user)
+            self.pin_user_keys.entry(user).read()
         }
 
         fn get_pin_nonce(self: @ComponentState<TContractState>, user: ContractAddress) -> felt252 {
-            self.pin_user_nonces.read(user)
+            self.pin_user_nonces.entry(user).read()
         }
     }
 
@@ -163,9 +163,9 @@ pub mod PinComponent {
             user: ContractAddress,
             public_key: felt252,
         ) {
-            let current_key = self.pin_user_keys.read(user);
+            let current_key = self.pin_user_keys.entry(user).read();
             assert(current_key == 0, 'PIN already registered');
-            self.pin_user_keys.write(user, public_key);
+            self.pin_user_keys.entry(user).write(public_key);
             self.emit(PinRegistered { user, public_key });
         }
 
@@ -176,10 +176,10 @@ pub mod PinComponent {
             signature_r: felt252,
             signature_s: felt252,
         ) {
-            let stored_pub_key = self.pin_user_keys.read(user);
+            let stored_pub_key = self.pin_user_keys.entry(user).read();
             assert(stored_pub_key != 0, 'PIN not registered');
 
-            let nonce = self.pin_user_nonces.read(user);
+            let nonce = self.pin_user_nonces.entry(user).read();
 
             let mut hash_input = ArrayTrait::new();
             hash_input.append('VERIFY');
@@ -189,7 +189,7 @@ pub mod PinComponent {
             let valid = check_ecdsa_signature(message_hash, stored_pub_key, signature_r, signature_s);
             assert(valid, 'Invalid PIN signature');
 
-            self.pin_user_nonces.write(user, nonce + 1);
+            self.pin_user_nonces.entry(user).write(nonce + 1);
             self.emit(PinVerified { user, nonce_used: nonce });
         }
     }

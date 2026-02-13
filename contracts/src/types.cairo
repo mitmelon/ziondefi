@@ -102,7 +102,7 @@ pub struct PaymentRequest {
 }
 
 /// Holds details of a pending settlement awaiting delay expiry.
-#[derive(Drop, Serde, starknet::Store)]
+#[derive(Copy, Drop, Serde, starknet::Store)]
 pub struct SettlementInfo {
     pub request_id: u64,
     /// Net amount to send to the merchant after fees.
@@ -285,7 +285,7 @@ pub struct MerchantReputationFull {
 // ============================================================================
 
 /// Off-chain quote supplied by the relayer for a DEX swap.
-#[derive(Drop, Serde)]
+#[derive(Copy, Drop, Serde)]
 pub struct OffchainQuote {
     pub sell_token_address: ContractAddress,
     pub buy_token_address: ContractAddress,
@@ -297,7 +297,7 @@ pub struct OffchainQuote {
 }
 
 /// Fee breakdown in an AVNU quote.
-#[derive(Drop, Serde)]
+#[derive(Copy, Drop, Serde)]
 pub struct AvnuFee {
     pub fee_token: ContractAddress,
     pub avnu_fees: u256,
@@ -307,8 +307,8 @@ pub struct AvnuFee {
 }
 
 /// A single route segment in an AVNU multi-route swap.
-#[derive(Drop, Serde)]
+#[derive(Copy, Drop, Serde)]
 pub struct Route {
     pub exchange: ContractAddress,
-    pub path: Array<felt252>,
+    pub path: Span<felt252>,
 }

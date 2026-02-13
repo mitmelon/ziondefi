@@ -18,10 +18,10 @@ mod ZionDefiCard {
         StoragePathEntry,
     };
 
-    use openzeppelin::security::reentrancyguard::ReentrancyGuardComponent;
-    use openzeppelin::upgrades::UpgradeableComponent;
-    use openzeppelin::upgrades::interface::IUpgradeable;
-    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use openzeppelin_security::reentrancyguard::ReentrancyGuardComponent;
+    use openzeppelin_upgrades::UpgradeableComponent;
+    use openzeppelin_upgrades::interface::IUpgradeable;
+    use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 
     use ziondefi::types::{
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
@@ -457,9 +457,10 @@ mod ZionDefiCard {
             let ts = get_block_timestamp();
             req.status = RequestStatus::Approved;
             req.approved_at = ts;
+            let merchant = req.merchant;
             self.payment_requests.entry(request_id).write(req);
             self.request_status.entry(request_id).write(RequestStatus::Approved);
-            self.emit(PaymentRequestApproved { request_id, merchant: req.merchant, timestamp: ts });
+            self.emit(PaymentRequestApproved { request_id, merchant, timestamp: ts });
         }
 
         fn approve_multiple_requests(ref self: ContractState, request_ids: Span<u64>, sig_r: felt252, sig_s: felt252) {
@@ -480,13 +481,14 @@ mod ZionDefiCard {
                 if i >= request_ids.len() { break; }
                 let rid = *request_ids.at(i);
                 let mut req = self.payment_requests.entry(rid).read();
-                let is_bl = self.merchant_blacklist.entry(req.merchant).read();
+                let merchant = req.merchant;
+                let is_bl = self.merchant_blacklist.entry(merchant).read();
                 if req.request_id != 0 && req.status == RequestStatus::Pending && !is_bl {
                     req.status = RequestStatus::Approved;
                     req.approved_at = ts;
                     self.payment_requests.entry(rid).write(req);
                     self.request_status.entry(rid).write(RequestStatus::Approved);
-                    self.emit(PaymentRequestApproved { request_id: rid, merchant: req.merchant, timestamp: ts });
+                    self.emit(PaymentRequestApproved { request_id: rid, merchant, timestamp: ts });
                 }
                 i += 1;
             };
@@ -1541,29 +1543,32 @@ mod ZionDefiCard {
                 req.last_charged_at = ts;
                 req.charge_count = 1;
             }
+            let req_merchant = req.merchant;
+            let req_token = req.token;
+            let req_amount = req.amount;
             self.payment_requests.entry(request_id).write(req);
 
             if effective_delay == 0 {
-                let token_d = IERC20Dispatcher { contract_address: req.token };
+                let token_d = IERC20Dispatcher { contract_address: req_token };
                 assert(token_d.transfer(payout_wallet, amount_for_merchant), 'Merchant payout failed');
                 if admin_fee > 0 { assert(token_d.transfer(config.admin_wallet, admin_fee), 'Admin fee failed'); }
                 if cashback > 0 {
-                    let cb_bal = self.token_balances.entry(req.token).read();
-                    self.token_balances.entry(req.token).write(cb_bal + cashback);
+                    let cb_bal = self.token_balances.entry(req_token).read();
+                    self.token_balances.entry(req_token).write(cb_bal + cashback);
                 }
             }
 
             self._record_transaction(
-                request_id, req.merchant, payout_wallet, req.amount,
-                final_token_in, req.token, swap_needed, swap_fee, fee, cashback,
+                request_id, req_merchant, payout_wallet, req_amount,
+                final_token_in, req_token, swap_needed, swap_fee, fee, cashback,
                 if is_recurring { 'charge_recurring' } else { 'charge_one_time' },
             );
 
             self.last_charge_timestamp.write(ts);
-            self._update_daily_tracking(req.amount, req.token);
+            self._update_daily_tracking(req_amount, req_token);
 
-            let manual_id = self.token_price_feed_ids.entry(req.token).read();
-            let amount_usd = Price_Oracle::convert_token_to_usd_auto(req.token, req.amount, manual_id);
+            let manual_id = self.token_price_feed_ids.entry(req_token).read();
+            let amount_usd = Price_Oracle::convert_token_to_usd_auto(req_token, req_amount, manual_id);
             let largest = self.largest_charge_amount.read();
             if amount_usd > 0 {
                 if largest > 0 && amount_usd > largest * ANOMALY_MULTIPLIER {
@@ -1577,11 +1582,11 @@ mod ZionDefiCard {
                 }
             }
 
-            factory.update_merchant_reputation(req.merchant, get_contract_address(), req.amount, true);
+            factory.update_merchant_reputation(req_merchant, get_contract_address(), req_amount, true);
 
             self.emit(CardCharged {
-                request_id, merchant: req.merchant, amount: req.amount,
-                token_in: final_token_in, token_out: req.token,
+                request_id, merchant: req_merchant, amount: req_amount,
+                token_in: final_token_in, token_out: req_token,
                 swap_occurred: swap_needed, settle_at, timestamp: ts,
             });
             self.reentrancy.end();

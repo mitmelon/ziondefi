@@ -5,8 +5,9 @@
 use starknet::ContractAddress;
 use starknet::contract_address_const;
 use starknet::get_block_timestamp;
-use core::starknet::info::get_tx_info;
-use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+use starknet::get_tx_info;
+use core::num::traits::Zero;
+use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use pragma_lib::abi::{IPragmaABIDispatcher, IPragmaABIDispatcherTrait};
 use pragma_lib::types::{DataType, PragmaPricesResponse};
 
@@ -135,9 +136,8 @@ pub fn convert_usd_to_token_auto(
     
     if price == 0 { return 0; }
 
-    // Get Token Decimals
-    let token_dispatcher = IERC20Dispatcher { contract_address: token };
-    let token_decimals = token_dispatcher.decimals();
+    // Get Token Decimals via ERC20 metadata
+    let token_decimals = _get_token_decimals(token);
 
     // Math: (TargetUSD * 10^PriceDecimals * 10^TokenDecimals) / Price
     let price_u256: u256 = price.into();
@@ -166,9 +166,8 @@ pub fn convert_token_to_usd_auto(
     let (price, price_decimals) = get_asset_price(pair_id);
     if price == 0 { return 0; }
 
-    // 3. Get Token Decimals
-    let token_dispatcher = IERC20Dispatcher { contract_address: token };
-    let token_decimals = token_dispatcher.decimals();
+    // 3. Get Token Decimals via ERC20 metadata
+    let token_decimals = _get_token_decimals(token);
 
     // 4. Math: (Amount * Price) / 10^TokenDecimals
     // Result matches Price Decimals (usually 8)
@@ -191,4 +190,15 @@ fn _pow(base: u256, exp: u32) -> u256 {
         i += 1;
     };
     res
+}
+
+// Internal helper to get token decimals via a minimal interface
+#[starknet::interface]
+trait IERC20Decimals<TContractState> {
+    fn decimals(self: @TContractState) -> u8;
+}
+
+fn _get_token_decimals(token: ContractAddress) -> u8 {
+    let d = IERC20DecimalsDispatcher { contract_address: token };
+    d.decimals()
 }
