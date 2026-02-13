@@ -10,7 +10,7 @@ license = "MIT"
 [dependencies]
 starknet = "2.8.4"
 openzeppelin = { git = "https://github.com/OpenZeppelin/cairo-contracts.git", tag = "v3.0.0" }
-pragma_lib = { git = "https://github.com/astraly-labs/pragma.git", branch = "main" }
+pragma = { git = "https://github.com/astraly-labs/pragma.git", branch = "main" }
 
 [dev-dependencies]
 cairo_test = "2.12.2"
