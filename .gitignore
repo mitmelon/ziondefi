@@ -1,0 +1,24 @@
+# Directories
+node_modules/
+public/
+src/
+/secrets
+/storage
+/template
+
+
+
+# Files
+.env.local
+error.log
+site.webmanifes
+.env
+.DS_Store
+zion.code-workspace
+package-lock.json
+server.js
+game.html
+tailwind.config.js
+package.json
+
+
