@@ -24,7 +24,7 @@ mod ZionDefiCard {
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
         TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
-        OffchainQuote,
+        OffchainQuote, Route,
         CHARGE_COOLDOWN,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
@@ -671,19 +671,9 @@ mod ZionDefiCard {
                         assert(q.buy_token_address == target_token, 'Quote buy mismatch');
                         assert(q.sell_amount >= remaining, 'Quote sell < remaining');
                         let sell_amount = remaining;
-                        let buy_d = IERC20Dispatcher { contract_address: target_token };
-                        let pre_swap_balance = buy_d.balance_of(card);
                         let config = factory.get_protocol_config();
-                        let avnu = IZorahAVNURouterDispatcher { contract_address: config.avnu_router };
-                        assert(d.approve(config.avnu_router, sell_amount), 'Approve failed');
                         let min_out = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-                        assert(avnu.multi_route_swap(
-                            token, sell_amount, target_token, q.buy_amount, min_out,
-                            card, q.fee.integrator_fees_bps, Zero::zero(), q.routes,
-                        ), 'Swap failed');
-                        let post_swap_balance = buy_d.balance_of(card);
-                        let credited = post_swap_balance - pre_swap_balance;
-                        assert(credited > 0, 'Swap returned nothing');
+                        let credited = self._do_swap(config.avnu_router, token, target_token, sell_amount, q.buy_amount, min_out, q.fee.integrator_fees_bps, q.routes);
                         let tracked = self.token_balances.entry(target_token).read();
                         self.token_balances.entry(target_token).write(tracked + credited);
                         let ts = get_block_timestamp();
@@ -770,19 +760,9 @@ mod ZionDefiCard {
                                     assert(q.sell_token_address == token, 'Quote sell mismatch');
                                     assert(q.buy_token_address == target_token, 'Quote buy mismatch');
                                     assert(q.sell_amount >= surplus, 'Quote sell < surplus');
-                                    let buy_d = IERC20Dispatcher { contract_address: target_token };
-                                    let pre = buy_d.balance_of(card);
                                     let config = factory.get_protocol_config();
-                                    let avnu = IZorahAVNURouterDispatcher { contract_address: config.avnu_router };
-                                    assert(d.approve(config.avnu_router, surplus), 'Approve failed');
                                     let min_out = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-                                    assert(avnu.multi_route_swap(
-                                        token, surplus, target_token, q.buy_amount, min_out,
-                                        card, q.fee.integrator_fees_bps, Zero::zero(), q.routes,
-                                    ), 'Swap failed');
-                                    let post = buy_d.balance_of(card);
-                                    let credited = post - pre;
-                                    assert(credited > 0, 'Swap returned nothing');
+                                    let credited = self._do_swap(config.avnu_router, token, target_token, surplus, q.buy_amount, min_out, q.fee.integrator_fees_bps, q.routes);
                                     let tgt_bal = self.token_balances.entry(target_token).read();
                                     self.token_balances.entry(target_token).write(tgt_bal + credited);
                                     self.emit(SwapExecuted { token_in: token, token_out: target_token, amount_in: surplus, amount_out: credited, timestamp: ts });
@@ -870,23 +850,8 @@ mod ZionDefiCard {
             self.token_balances.entry(sell_token).write(bal - quote.sell_amount);
 
             let config = factory.get_protocol_config();
-            let avnu = IZorahAVNURouterDispatcher { contract_address: config.avnu_router };
-            let card = get_contract_address();
-            let buy_d = IERC20Dispatcher { contract_address: buy_token };
-            let pre_swap_balance = buy_d.balance_of(card);
-
-            let sell_d = IERC20Dispatcher { contract_address: sell_token };
-            assert(sell_d.approve(config.avnu_router, quote.sell_amount), 'Approve failed');
-
             let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-            assert(avnu.multi_route_swap(
-                sell_token, quote.sell_amount, buy_token, quote.buy_amount, min_out,
-                card, quote.fee.integrator_fees_bps, Zero::zero(), quote.routes,
-            ), 'Swap failed');
-
-            let post_swap_balance = buy_d.balance_of(card);
-            let credited = post_swap_balance - pre_swap_balance;
-            assert(credited > 0, 'Swap returned nothing');
+            let credited = self._do_swap(config.avnu_router, sell_token, buy_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
             let tracked = self.token_balances.entry(buy_token).read();
             self.token_balances.entry(buy_token).write(tracked + credited);
 
@@ -924,23 +889,8 @@ mod ZionDefiCard {
 
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
-            let avnu = IZorahAVNURouterDispatcher { contract_address: config.avnu_router };
-            let card = get_contract_address();
-            let buy_d = IERC20Dispatcher { contract_address: target_token };
-            let pre_swap_balance = buy_d.balance_of(card);
-
-            let sell_d = IERC20Dispatcher { contract_address: source_token };
-            assert(sell_d.approve(config.avnu_router, quote.sell_amount), 'Approve failed');
-
             let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-            assert(avnu.multi_route_swap(
-                source_token, quote.sell_amount, target_token, quote.buy_amount, min_out,
-                card, quote.fee.integrator_fees_bps, Zero::zero(), quote.routes,
-            ), 'Swap failed');
-
-            let post_swap_balance = buy_d.balance_of(card);
-            let credited = post_swap_balance - pre_swap_balance;
-            assert(credited > 0, 'Swap returned nothing');
+            let credited = self._do_swap(config.avnu_router, source_token, target_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
             let tracked = self.token_balances.entry(target_token).read();
             self.token_balances.entry(target_token).write(tracked + credited);
 
@@ -1264,6 +1214,33 @@ mod ZionDefiCard {
     #[generate_trait]
     impl InternalImpl of InternalTrait {
 
+        fn _do_swap(
+            ref self: ContractState,
+            avnu_router: ContractAddress,
+            sell_token: ContractAddress,
+            buy_token: ContractAddress,
+            sell_amount: u256,
+            expected_buy: u256,
+            min_buy: u256,
+            integrator_fees_bps: u128,
+            routes: Span<Route>,
+        ) -> u256 {
+            let card = get_contract_address();
+            let sell_d = IERC20Dispatcher { contract_address: sell_token };
+            assert(sell_d.approve(avnu_router, sell_amount), 'Approve failed');
+            let buy_d = IERC20Dispatcher { contract_address: buy_token };
+            let pre = buy_d.balance_of(card);
+            let avnu = IZorahAVNURouterDispatcher { contract_address: avnu_router };
+            assert(avnu.multi_route_swap(
+                sell_token, sell_amount, buy_token, expected_buy, min_buy,
+                card, integrator_fees_bps, Zero::zero(), routes,
+            ), 'Swap failed');
+            let post = buy_d.balance_of(card);
+            let credited = post - pre;
+            assert(credited > 0, 'Swap returned nothing');
+            credited
+        }
+
         fn _assert_owner(self: @ContractState) {
             assert(get_caller_address() == self.owner.read(), 'Not owner');
         }
@@ -1438,17 +1415,9 @@ mod ZionDefiCard {
                 self.token_balances.entry(source_token).write(sell_bal - q.sell_amount);
 
                 let config = factory.get_protocol_config();
-                let avnu = IZorahAVNURouterDispatcher { contract_address: config.avnu_router };
-                let sell_d = IERC20Dispatcher { contract_address: source_token };
-                assert(sell_d.approve(config.avnu_router, q.sell_amount), 'Approve failed');
-
                 let slippage_adjusted = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
                 let min_out = if slippage_adjusted > req.amount { slippage_adjusted } else { req.amount };
-
-                assert(avnu.multi_route_swap(
-                    source_token, q.sell_amount, req.token, q.buy_amount, min_out,
-                    get_contract_address(), q.fee.integrator_fees_bps, Zero::zero(), q.routes,
-                ), 'Swap failed');
+                self._do_swap(config.avnu_router, source_token, req.token, q.sell_amount, q.buy_amount, min_out, q.fee.integrator_fees_bps, q.routes);
 
                 swap_fee = q.fee.avnu_fees;
                 final_token_in = source_token;
