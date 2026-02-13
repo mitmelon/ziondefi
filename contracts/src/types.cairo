@@ -285,6 +285,15 @@ pub struct MerchantReputationFull {
 // ============================================================================
 
 /// Off-chain quote supplied by the relayer for a DEX swap.
+///
+/// `routes` contains the **pre-serialized** AVNU v2 route data (including the
+/// `Array<Route>` length prefix).  The relayer obtains this directly from the
+/// AVNU API and passes it verbatim so the contract can forward it to the AVNU
+/// Exchange contract via a low-level `call_contract_syscall`.
+///
+/// This avoids replicating AVNU's complex type hierarchy (Route → RouteSwap
+/// enum → DirectSwap / BranchSwap with custom Serde) inside the ZionDefi
+/// crate, and guarantees wire-format compatibility with any AVNU version.
 #[derive(Copy, Drop, Serde)]
 pub struct OffchainQuote {
     pub sell_token_address: ContractAddress,
@@ -293,7 +302,7 @@ pub struct OffchainQuote {
     pub buy_amount: u256,
     pub price_impact: u256,
     pub fee: AvnuFee,
-    pub routes: Span<Route>,
+    pub routes: Span<felt252>,
 }
 
 /// Fee breakdown in an AVNU quote.
@@ -304,11 +313,4 @@ pub struct AvnuFee {
     pub avnu_fees_bps: u128,
     pub integrator_fees: u256,
     pub integrator_fees_bps: u128,
-}
-
-/// A single route segment in an AVNU multi-route swap.
-#[derive(Copy, Drop, Serde)]
-pub struct Route {
-    pub exchange: ContractAddress,
-    pub path: Span<felt252>,
 }

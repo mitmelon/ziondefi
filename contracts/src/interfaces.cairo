@@ -8,7 +8,6 @@ use super::types::{
     PaymentRequest, RequestStatus, TransactionSummary,
     BalanceSummary, FraudAlert, SettlementInfo,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
-    Route,
 };
 
 // ============================================================================
@@ -167,24 +166,4 @@ pub trait IZionDefiFactory<TContractState> {
     fn get_accepted_tokens(self: @TContractState) -> Span<ContractAddress>;
     fn get_effective_settlement_delay(self: @TContractState, merchant: ContractAddress) -> u64;
     fn is_merchant_instant_settlement(self: @TContractState, merchant: ContractAddress) -> bool;
-}
-
-// ============================================================================
-// IZorahAVNURouter — AVNU DEX Router Interface
-// ============================================================================
-
-#[starknet::interface]
-pub trait IZorahAVNURouter<TContractState> {
-    fn multi_route_swap(
-        ref self: TContractState,
-        sell_token_address: ContractAddress,
-        sell_token_amount: u256,
-        buy_token_address: ContractAddress,
-        buy_token_amount: u256,
-        buy_token_min_amount: u256,
-        beneficiary: ContractAddress,
-        integrator_fee_amount_bps: u128,
-        integrator_fee_recipient: ContractAddress,
-        routes: Span<Route>,
-    ) -> bool;
 }

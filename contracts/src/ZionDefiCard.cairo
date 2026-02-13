@@ -9,6 +9,7 @@ mod ZionDefiCard {
     use starknet::{
         ContractAddress, ClassHash,
         get_caller_address, get_block_timestamp, get_contract_address,
+        SyscallResultTrait,
     };
     use starknet::storage::{
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,
@@ -24,7 +25,7 @@ mod ZionDefiCard {
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
         TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
-        OffchainQuote, Route,
+        OffchainQuote,
         CHARGE_COOLDOWN,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
@@ -32,7 +33,6 @@ mod ZionDefiCard {
     };
     use ziondefi::interfaces::{
         IZionDefiFactoryDispatcher, IZionDefiFactoryDispatcherTrait,
-        IZorahAVNURouterDispatcher, IZorahAVNURouterDispatcherTrait,
     };
     use ziondefi::helpers;
     use ziondefi::Price_Oracle;
@@ -1212,6 +1212,13 @@ mod ZionDefiCard {
     #[generate_trait]
     impl InternalImpl of InternalTrait {
 
+        /// Execute a swap on the AVNU Exchange via low-level `call_contract_syscall`.
+        ///
+        /// `routes` is the pre-serialized AVNU v2 route data (including the
+        /// `Array<Route>` length prefix) that the relayer obtained from the
+        /// AVNU API.  It is spliced into the `multi_route_swap` calldata
+        /// verbatim so the on-chain ABI encoding matches AVNU's expectations
+        /// exactly — no local Route / RouteSwap types required.
         fn _do_swap(
             ref self: ContractState,
             avnu_router: ContractAddress,
@@ -1221,18 +1228,41 @@ mod ZionDefiCard {
             expected_buy: u256,
             min_buy: u256,
             integrator_fees_bps: u128,
-            routes: Span<Route>,
+            routes: Span<felt252>,
         ) -> u256 {
             let card = get_contract_address();
             let sell_d = IERC20Dispatcher { contract_address: sell_token };
+            // Reset allowance first (safety for tokens that require it)
+            sell_d.approve(avnu_router, 0);
             assert(sell_d.approve(avnu_router, sell_amount), 'Approve failed');
+
             let buy_d = IERC20Dispatcher { contract_address: buy_token };
             let pre = buy_d.balance_of(card);
-            let avnu = IZorahAVNURouterDispatcher { contract_address: avnu_router };
-            assert(avnu.multi_route_swap(
-                sell_token, sell_amount, buy_token, expected_buy, min_buy,
-                card, integrator_fees_bps, Zero::zero(), routes,
-            ), 'Swap failed');
+
+            // Build multi_route_swap calldata
+            let mut calldata: Array<felt252> = array![];
+            Serde::serialize(@sell_token, ref calldata);
+            Serde::serialize(@sell_amount, ref calldata);
+            Serde::serialize(@buy_token, ref calldata);
+            Serde::serialize(@expected_buy, ref calldata);
+            Serde::serialize(@min_buy, ref calldata);
+            Serde::serialize(@card, ref calldata);
+            Serde::serialize(@integrator_fees_bps, ref calldata);
+            let zero_addr: ContractAddress = Zero::zero();
+            Serde::serialize(@zero_addr, ref calldata);
+            // Splice in pre-serialized AVNU route data from relayer
+            let mut i: u32 = 0;
+            while i < routes.len() {
+                calldata.append(*routes[i]);
+                i += 1;
+            };
+
+            let mut ret = starknet::syscalls::call_contract_syscall(
+                avnu_router, selector!("multi_route_swap"), calldata.span(),
+            ).unwrap_syscall();
+            let success: bool = Serde::deserialize(ref ret).unwrap();
+            assert(success, 'Swap failed');
+
             let post = buy_d.balance_of(card);
             let credited = post - pre;
             assert(credited > 0, 'Swap returned nothing');
