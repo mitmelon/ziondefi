@@ -856,7 +856,6 @@ mod ZionDefiCard {
             self.token_balances.entry(buy_token).write(tracked + credited);
 
             let ts = get_block_timestamp();
-            self.emit(ManualSwapExecuted { token_in: sell_token, token_out: buy_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
             self.emit(SwapExecuted { token_in: sell_token, token_out: buy_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
             self.reentrancy.end();
         }
@@ -895,7 +894,6 @@ mod ZionDefiCard {
             self.token_balances.entry(target_token).write(tracked + credited);
 
             let ts = get_block_timestamp();
-            self.emit(ManualSwapExecuted { token_in: source_token, token_out: target_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
             self.emit(SwapExecuted { token_in: source_token, token_out: target_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
             self.reentrancy.end();
         }
