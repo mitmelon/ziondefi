@@ -2,13 +2,13 @@
 // ZionDefi Protocol v1.0 — Interface Definitions
 // All trait interfaces consumed or exposed by the protocol contracts.
 
-use starknet::{ContractAddress, ClassHash};
+use starknet::ContractAddress;
 use super::types::{
     PaymentMode, CardConfig, CardInfo, CardStatus, RateLimitStatus,
-    PaymentRequest, RequestStatus, TransactionRecord, TransactionSummary,
+    PaymentRequest, RequestStatus, TransactionSummary,
     BalanceSummary, FraudAlert, SettlementInfo,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
-    MerchantReputationFull, Route,
+    Route,
 };
 
 // ============================================================================

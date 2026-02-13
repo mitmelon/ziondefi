@@ -3,19 +3,17 @@
 // Zero-config Pragma integration for token↔USD conversions.
 
 use starknet::ContractAddress;
-use starknet::contract_address_const;
 use starknet::get_block_timestamp;
 use starknet::get_tx_info;
 use core::num::traits::Zero;
-use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use pragma_lib::abi::{IPragmaABIDispatcher, IPragmaABIDispatcherTrait};
-use pragma_lib::types::{DataType, PragmaPricesResponse};
+use pragma_lib::types::DataType;
 
 const SN_MAIN: felt252 = 0x534e5f4d41494e;       // 'SN_MAIN'
 const SN_SEPOLIA: felt252 = 0x534e5f5345504f4c4941; // 'SN_SEPOLIA'
 
-fn ORACLE_MAINNET() -> ContractAddress { contract_address_const::<0x2a85bd616f912537c50a49a4076db02c00b29b2cdc8a197ce92ed1837fa875b>() }
-fn ORACLE_SEPOLIA() -> ContractAddress { contract_address_const::<0x36031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a>() }
+fn ORACLE_MAINNET() -> ContractAddress { 0x2a85bd616f912537c50a49a4076db02c00b29b2cdc8a197ce92ed1837fa875b.try_into().unwrap() }
+fn ORACLE_SEPOLIA() -> ContractAddress { 0x36031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a.try_into().unwrap() }
 
 
 const PAIR_ETH_USD: felt252 = 19514442401534788;    // "ETH/USD"
@@ -32,19 +30,19 @@ const PAIR_WSTETH_USD: felt252 = 4123830361201186138570928; // "WSTETH/USD"
 const PAIR_FIXED_USD: felt252 = 23917257655180781648846825458055798674244; // "FIXEDRESERVED/USD"
 
 // --- MAINNET TOKENS ---
-fn MAINNET_ETH() -> ContractAddress { contract_address_const::<0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7>() }
-fn MAINNET_STRK() -> ContractAddress { contract_address_const::<0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d>() }
-fn MAINNET_USDC() -> ContractAddress { contract_address_const::<0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8>() }
-fn MAINNET_USDT() -> ContractAddress { contract_address_const::<0x068f5c6a61780768455de69077e07e89787839bf8166decfbf92b645209c0fb8>() }
-fn MAINNET_DAI() -> ContractAddress { contract_address_const::<0x00da114221cb83fa859dbdb4c44beeaa0bb37c7537ad5ae66fe5e0efd20e6eb3>() }
-fn MAINNET_WBTC() -> ContractAddress { contract_address_const::<0x03fe2b97c1fd336e75df0850d7b18053bf81880454a942c41374827f27bd163f>() }
-fn MAINNET_LORDS() -> ContractAddress { contract_address_const::<0x0124aeb495b947201f5fac96fd1138e326ad86195b98df6dec9009158a533b49>() }
-fn MAINNET_WSTETH() -> ContractAddress { contract_address_const::<0x042b8f0484674ca266ac5d08e4ac6a3fe65bd3129795def2dca5c34ecc5f96d2>() }
+fn MAINNET_ETH() -> ContractAddress { 0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7.try_into().unwrap() }
+fn MAINNET_STRK() -> ContractAddress { 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d.try_into().unwrap() }
+fn MAINNET_USDC() -> ContractAddress { 0x053c91253bc9682c04929ca02ed00b3e423f6710d2ee7e0d5ebb06f3ecf368a8.try_into().unwrap() }
+fn MAINNET_USDT() -> ContractAddress { 0x068f5c6a61780768455de69077e07e89787839bf8166decfbf92b645209c0fb8.try_into().unwrap() }
+fn MAINNET_DAI() -> ContractAddress { 0x00da114221cb83fa859dbdb4c44beeaa0bb37c7537ad5ae66fe5e0efd20e6eb3.try_into().unwrap() }
+fn MAINNET_WBTC() -> ContractAddress { 0x03fe2b97c1fd336e75df0850d7b18053bf81880454a942c41374827f27bd163f.try_into().unwrap() }
+fn MAINNET_LORDS() -> ContractAddress { 0x0124aeb495b947201f5fac96fd1138e326ad86195b98df6dec9009158a533b49.try_into().unwrap() }
+fn MAINNET_WSTETH() -> ContractAddress { 0x042b8f0484674ca266ac5d08e4ac6a3fe65bd3129795def2dca5c34ecc5f96d2.try_into().unwrap() }
 
 // --- SEPOLIA TOKENS ---
-fn SEPOLIA_ETH() -> ContractAddress { contract_address_const::<0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7>() } // ETH is same address usually
-fn SEPOLIA_STRK() -> ContractAddress { contract_address_const::<0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d>() } // STRK is same
-fn SEPOLIA_USDC() -> ContractAddress { contract_address_const::<0x053b40a647cedfca6ca84f542a0fe36736031905a9639a7f19a3c1e66bfd5080>() } // Different on Sepolia
+fn SEPOLIA_ETH() -> ContractAddress { 0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7.try_into().unwrap() }
+fn SEPOLIA_STRK() -> ContractAddress { 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d.try_into().unwrap() }
+fn SEPOLIA_USDC() -> ContractAddress { 0x053b40a647cedfca6ca84f542a0fe36736031905a9639a7f19a3c1e66bfd5080.try_into().unwrap() }
 
 // Errors
 const PRICE_STALE: felt252 = 'Oracle: Price Stale';
@@ -163,7 +161,7 @@ pub fn convert_token_to_usd_auto(
     if pair_id == 0 { return 0; }
 
     // 2. Get Price
-    let (price, price_decimals) = get_asset_price(pair_id);
+    let (price, _price_decimals) = get_asset_price(pair_id);
     if price == 0 { return 0; }
 
     // 3. Get Token Decimals via ERC20 metadata

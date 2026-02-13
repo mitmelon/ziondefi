@@ -3,8 +3,6 @@
 // Smart wallet with ECDSA PIN verification, multi-currency support,
 // settlement delays, and anomaly detection.
 
-use starknet::ContractAddress;
-
 #[starknet::contract]
 mod ZionDefiCard {
     use core::num::traits::Zero;
@@ -13,8 +11,7 @@ mod ZionDefiCard {
         get_caller_address, get_block_timestamp, get_contract_address,
     };
     use starknet::storage::{
-        Map, StorageMapReadAccess, StorageMapWriteAccess,
-        StoragePointerReadAccess, StoragePointerWriteAccess,
+        Map, StoragePointerReadAccess, StoragePointerWriteAccess,
         StoragePathEntry,
     };
 
@@ -25,10 +22,10 @@ mod ZionDefiCard {
 
     use ziondefi::types::{
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
-        TransactionRecord, FraudAlert, FraudScore, TokenBalance, BalanceSummary,
+        TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
-        OffchainQuote, ProtocolConfig, MerchantReputation,
-        MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION, CHARGE_COOLDOWN,
+        OffchainQuote,
+        CHARGE_COOLDOWN,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
         ANOMALY_MULTIPLIER,
@@ -315,7 +312,6 @@ mod ZionDefiCard {
             self.max_transaction_amount.write(max_tx_amount);
             self.daily_transaction_limit.write(daily_tx_limit);
             self.daily_spend_limit.write(daily_spend_limit);
-            self._revoke_payments_exceeding_global_limit(max_tx_amount);
             self.emit(LimitsUpdated { max_tx: max_tx_amount, daily_tx_limit, daily_spend: daily_spend_limit, timestamp: get_block_timestamp() });
         }
 
@@ -323,7 +319,6 @@ mod ZionDefiCard {
             self._assert_active();
             self._assert_owner_pin(sig_r, sig_s);
             self.merchant_spend_limit.entry(merchant).write(max_amount_usd);
-            self._revoke_merchant_payments_exceeding(merchant, max_amount_usd);
             self.emit(ConfigUpdated { key: 'merchant_limit', timestamp: get_block_timestamp() });
         }
 
@@ -1686,60 +1681,6 @@ mod ZionDefiCard {
             let mut req = self.payment_requests.entry(request_id).read();
             req.status = RequestStatus::Cancelled;
             self.payment_requests.entry(request_id).write(req);
-        }
-
-        fn _revoke_payments_exceeding_global_limit(ref self: ContractState, max_usd: u256) {
-            if max_usd == 0 { return; }
-            let total = self.request_counter.read();
-            let mut i: u64 = 1;
-            loop {
-                if i > total { break; }
-                let status = self.request_status.entry(i).read();
-                if status == RequestStatus::Approved || status == RequestStatus::AwaitingSettlement {
-                    let req = self.payment_requests.entry(i).read();
-                    let manual_id = self.token_price_feed_ids.entry(req.token).read();
-                    let usd = Price_Oracle::convert_token_to_usd_auto(req.token, req.amount, manual_id);
-                    if usd > 0 && usd > max_usd {
-                        if status == RequestStatus::AwaitingSettlement {
-                            self._refund_settlement(i);
-                        } else {
-                            self.request_status.entry(i).write(RequestStatus::Cancelled);
-                            let mut r = req;
-                            r.status = RequestStatus::Cancelled;
-                            self.payment_requests.entry(i).write(r);
-                        }
-                    }
-                }
-                i += 1;
-            };
-        }
-
-        fn _revoke_merchant_payments_exceeding(ref self: ContractState, merchant: ContractAddress, max_usd: u256) {
-            if max_usd == 0 { return; }
-            let total = self.request_counter.read();
-            let mut i: u64 = 1;
-            loop {
-                if i > total { break; }
-                let req = self.payment_requests.entry(i).read();
-                if req.merchant == merchant {
-                    let status = self.request_status.entry(i).read();
-                    if status == RequestStatus::Approved || status == RequestStatus::AwaitingSettlement {
-                        let manual_id = self.token_price_feed_ids.entry(req.token).read();
-                        let usd = Price_Oracle::convert_token_to_usd_auto(req.token, req.amount, manual_id);
-                        if usd > 0 && usd > max_usd {
-                            if status == RequestStatus::AwaitingSettlement {
-                                self._refund_settlement(i);
-                            } else {
-                                self.request_status.entry(i).write(RequestStatus::Cancelled);
-                                let mut r = req;
-                                r.status = RequestStatus::Cancelled;
-                                self.payment_requests.entry(i).write(r);
-                            }
-                        }
-                    }
-                }
-                i += 1;
-            };
         }
 
         fn _get_requests_by_status(self: @ContractState, offset: u64, limit: u8, target: RequestStatus) -> Span<PaymentRequest> {

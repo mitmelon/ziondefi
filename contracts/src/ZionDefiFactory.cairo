@@ -7,8 +7,7 @@
 mod ZionDefiFactory {
     use core::num::traits::Zero;
     use starknet::storage::{
-        Map, StorageMapReadAccess, StorageMapWriteAccess,
-        StoragePointerReadAccess, StoragePointerWriteAccess,
+        Map, StoragePointerReadAccess, StoragePointerWriteAccess,
         StoragePathEntry,
     };
     use starknet::{
@@ -20,8 +19,6 @@ mod ZionDefiFactory {
     use openzeppelin_security::pausable::PausableComponent;
     use openzeppelin_upgrades::UpgradeableComponent;
     use openzeppelin_upgrades::interface::IUpgradeable;
-    use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
-
     use ziondefi::types::{
         PaymentMode, CardConfig, ProtocolConfig, MerchantReputation,
         MerchantInfo, MerchantReputationFull, DEFAULT_SETTLEMENT_DELAY,
