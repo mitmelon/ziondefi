@@ -15,6 +15,7 @@ mod ZionDefiCard {
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess,
         StoragePointerReadAccess, StoragePointerWriteAccess,
+        StoragePathEntry,
     };
 
     use openzeppelin::security::reentrancyguard::ReentrancyGuardComponent;
