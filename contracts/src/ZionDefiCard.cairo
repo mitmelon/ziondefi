@@ -685,7 +685,6 @@ mod ZionDefiCard {
             self._assert_owner_or_relayer_pin(sig_r, sig_s);
             let card = get_contract_address();
             let ts = get_block_timestamp();
-            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
 
             let mut i: u32 = 0;
             loop {
@@ -1258,6 +1257,7 @@ mod ZionDefiCard {
             if full_fee_in_token == 0 {
                 return available; // price feed unavailable — skip, don't block deposit
             }
+
 
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
