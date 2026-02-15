@@ -5,6 +5,8 @@ src/
 /secrets
 /storage
 /template
+/build
+
 
 
 
@@ -20,5 +22,6 @@ server.js
 game.html
 tailwind.config.js
 package.json
+example.js
 
 
