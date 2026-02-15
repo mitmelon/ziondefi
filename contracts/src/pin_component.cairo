@@ -176,8 +176,20 @@ pub mod PinComponent {
             signature_r: felt252,
             signature_s: felt252,
         ) {
+            assert(self._try_verify_pin(user, signature_r, signature_s), 'Invalid PIN signature');
+        }
+
+        /// Non-panicking PIN verification.  Returns `true` when the
+        /// signature is valid and `false` otherwise.  Nonce is only
+        /// incremented on success so a failed attempt cannot burn nonces.
+        fn _try_verify_pin(
+            ref self: ComponentState<TContractState>,
+            user: ContractAddress,
+            signature_r: felt252,
+            signature_s: felt252,
+        ) -> bool {
             let stored_pub_key = self.pin_user_keys.entry(user).read();
-            assert(stored_pub_key != 0, 'PIN not registered');
+            if stored_pub_key == 0 { return false; }
 
             let nonce = self.pin_user_nonces.entry(user).read();
 
@@ -187,10 +199,11 @@ pub mod PinComponent {
             let message_hash = poseidon_hash_span(hash_input.span());
 
             let valid = check_ecdsa_signature(message_hash, stored_pub_key, signature_r, signature_s);
-            assert(valid, 'Invalid PIN signature');
-
-            self.pin_user_nonces.entry(user).write(nonce + 1);
-            self.emit(PinVerified { user, nonce_used: nonce });
+            if valid {
+                self.pin_user_nonces.entry(user).write(nonce + 1);
+                self.emit(PinVerified { user, nonce_used: nonce });
+            }
+            valid
         }
     }
 }
