@@ -2,7 +2,7 @@
 // ZionDefi Protocol v1.0 — Interface Definitions
 // All trait interfaces consumed or exposed by the protocol contracts.
 
-use starknet::ContractAddress;
+use starknet::{ContractAddress, ClassHash};
 use super::types::{
     PaymentMode, CardConfig, CardInfo, CardStatus, RateLimitStatus,
     PaymentRequest, RequestStatus, TransactionSummary,
@@ -121,6 +121,7 @@ pub trait IZionDefiFactory<TContractState> {
     fn set_user_cashback_percent(ref self: TContractState, new_percent: u8);
     fn set_burn_fee(ref self: TContractState, new_fee: u256);
     fn set_avnu_router(ref self: TContractState, avnu_router: ContractAddress);
+    fn set_vault_class_hash(ref self: TContractState, new_class_hash: ClassHash);
     fn pause(ref self: TContractState);
     fn unpause(ref self: TContractState);
 
@@ -164,6 +165,7 @@ pub trait IZionDefiFactory<TContractState> {
     fn get_merchant_reputation(self: @TContractState, merchant: ContractAddress) -> MerchantReputation;
     fn is_card_deployed(self: @TContractState, card: ContractAddress) -> bool;
     fn get_total_cards_deployed(self: @TContractState) -> u64;
+    fn get_vault_class_hash(self: @TContractState) -> ClassHash;
     fn get_total_merchants(self: @TContractState) -> u64;
     fn is_token_accepted(self: @TContractState, token: ContractAddress) -> bool;
     fn get_accepted_tokens(self: @TContractState) -> Span<ContractAddress>;

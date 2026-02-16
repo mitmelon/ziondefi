@@ -1258,7 +1258,6 @@ mod ZionDefiCard {
                 return available; // price feed unavailable — skip, don't block deposit
             }
 
-
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
             let d = IERC20Dispatcher { contract_address: token };

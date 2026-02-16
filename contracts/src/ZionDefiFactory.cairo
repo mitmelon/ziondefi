@@ -121,6 +121,7 @@ mod ZionDefiFactory {
         MerchantGloballyBlacklisted: MerchantGloballyBlacklisted,
         MerchantGloballyUnblacklisted: MerchantGloballyUnblacklisted,
         MerchantReputationUpdated: MerchantReputationUpdated,
+        VaultClassHashUpdated: VaultClassHashUpdated,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -151,6 +152,8 @@ mod ZionDefiFactory {
     struct MerchantGloballyUnblacklisted { #[key] merchant: ContractAddress, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct MerchantReputationUpdated { #[key] merchant: ContractAddress, #[key] card: ContractAddress, reputation_score: u16, timestamp: u64 }
+    #[derive(Drop, starknet::Event)]
+    struct VaultClassHashUpdated { old_class_hash: ClassHash, new_class_hash: ClassHash, timestamp: u64 }
 
     // ====================================================================
     // CONSTRUCTOR
@@ -292,6 +295,14 @@ mod ZionDefiFactory {
             let old = self.avnu_router.read();
             self.avnu_router.write(avnu_router);
             self.emit(AVNURouterUpdated { old_router: old, new_router: avnu_router, timestamp: get_block_timestamp() });
+        }
+
+        fn set_vault_class_hash(ref self: ContractState, new_class_hash: ClassHash) {
+            self.ownable.assert_only_owner();
+            assert(!new_class_hash.is_zero(), 'Invalid class hash');
+            let old = self.vault_class_hash.read();
+            self.vault_class_hash.write(new_class_hash);
+            self.emit(VaultClassHashUpdated { old_class_hash: old, new_class_hash, timestamp: get_block_timestamp() });
         }
 
         fn pause(ref self: ContractState) { self.ownable.assert_only_owner(); self.pausable.pause(); }
@@ -590,6 +601,7 @@ mod ZionDefiFactory {
         }
 
         fn get_total_cards_deployed(self: @ContractState) -> u64 { self.total_cards_deployed.read() }
+        fn get_vault_class_hash(self: @ContractState) -> ClassHash { self.vault_class_hash.read() }
         fn get_total_merchants(self: @ContractState) -> u64 { self.total_merchants.read() }
 
         fn is_token_accepted(self: @ContractState, token: ContractAddress) -> bool {

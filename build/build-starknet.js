@@ -32,7 +32,7 @@ esbuild.build({
     logLevel: 'info',
 }).then(() => {
     console.log(`\n  StarknetLib bundle → ${path.relative(process.cwd(), OUT)}`);
-    console.log('  Exposes: window.StarknetLib.{ ec, hash, num, stark }\n');
+    console.log('  Exposes: window.StarknetLib.{ ec, hash, num, stark, bip39, grindKey }\n');
 }).catch((err) => {
     console.error('Build failed:', err);
     process.exit(1);
