@@ -23,7 +23,7 @@ mod ZionDefiCard {
 
     use ziondefi::types::{
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
-        TransactionRecord, TokenBalance, BalanceSummary,
+        TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
         LoginResult, OffchainQuote, PendingTransfer,
         CHARGE_COOLDOWN, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION,
@@ -94,6 +94,8 @@ mod ZionDefiCard {
         last_charge_timestamp: u64,
         transaction_counter: u64,
         transactions: Map<u64, TransactionRecord>,
+        fraud_alerts: Map<u64, FraudAlert>,
+        fraud_alert_count: u64,
         largest_charge_amount: u256,
         idempotency_keys: Map<felt252, bool>,
         deployment_fee_usd: u256,
@@ -145,6 +147,7 @@ mod ZionDefiCard {
         OwnerVerified: OwnerVerified,
         AutoSwapConfigured: AutoSwapConfigured,
         AutoSwapRemoved: AutoSwapRemoved,
+        ManualSwapExecuted: ManualSwapExecuted,
         TransferInitiated: TransferInitiated,
         TransferExecuted: TransferExecuted,
         TransferCancelled: TransferCancelled,
@@ -210,6 +213,8 @@ mod ZionDefiCard {
     struct AutoSwapConfigured { #[key] source_token: ContractAddress, #[key] target_token: ContractAddress, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct AutoSwapRemoved { #[key] source_token: ContractAddress, timestamp: u64 }
+    #[derive(Drop, starknet::Event)]
+    struct ManualSwapExecuted { token_in: ContractAddress, token_out: ContractAddress, amount_in: u256, amount_out: u256, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct TransferInitiated { #[key] transfer_id: u64, #[key] recipient: ContractAddress, token: ContractAddress, amount: u256, execute_after: u64, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
@@ -429,18 +434,18 @@ mod ZionDefiCard {
             self._check_merchant_rate_limit(merchant);
             assert(self.is_currency_accepted.entry(token).read(), 'Currency not accepted');
 
-            // Compute USD value once for all limit / threshold checks
-            let manual_id = self.token_price_feed_ids.entry(token).read();
-            let amount_usd = Price_Oracle::convert_token_to_usd_auto(token, amount, manual_id);
-
             let m_limit = self.merchant_spend_limit.entry(merchant).read();
-            if m_limit > 0 && amount_usd > 0 {
-                assert(amount_usd <= m_limit, 'Exceeds merchant limit');
+            if m_limit > 0 {
+                let manual_id = self.token_price_feed_ids.entry(token).read();
+                let amount_usd = Price_Oracle::convert_token_to_usd_auto(token, amount, manual_id);
+                if amount_usd > 0 { assert(amount_usd <= m_limit, 'Exceeds merchant limit'); }
             }
 
             let max_tx = self.max_transaction_amount.read();
-            if max_tx > 0 && amount_usd > 0 {
-                assert(amount_usd <= max_tx, 'Exceeds max tx amount');
+            if max_tx > 0 {
+                let manual_id = self.token_price_feed_ids.entry(token).read();
+                let amount_usd = Price_Oracle::convert_token_to_usd_auto(token, amount, manual_id);
+                if amount_usd > 0 { assert(amount_usd <= max_tx, 'Exceeds max tx amount'); }
             }
 
             assert(self._has_any_balance(), 'No funds');
@@ -451,10 +456,14 @@ mod ZionDefiCard {
             let threshold = self.auto_approve_threshold_usd.read();
             let mut initial_status = RequestStatus::Pending;
             let mut approved_at: u64 = 0;
-            if threshold > 0 && amount_usd > 0 && amount_usd <= threshold {
-                initial_status = RequestStatus::Approved;
-                approved_at = ts;
-                self.emit(PaymentAutoApproved { request_id, amount_usd, timestamp: ts });
+            if threshold > 0 {
+                let manual_id = self.token_price_feed_ids.entry(token).read();
+                let amount_usd = Price_Oracle::convert_token_to_usd_auto(token, amount, manual_id);
+                if amount_usd > 0 && amount_usd <= threshold {
+                    initial_status = RequestStatus::Approved;
+                    approved_at = ts;
+                    self.emit(PaymentAutoApproved { request_id, amount_usd, timestamp: ts });
+                }
             }
 
             let request = PaymentRequest {
@@ -874,9 +883,23 @@ mod ZionDefiCard {
             assert(factory.is_token_accepted(buy_token), 'Buy not supported');
             assert(self.is_currency_accepted.entry(sell_token).read(), 'Sell not on card');
             assert(self.is_currency_accepted.entry(buy_token).read(), 'Buy not on card');
+
+            assert(quote.sell_token_address == sell_token, 'Quote sell mismatch');
+            assert(quote.buy_token_address == buy_token, 'Quote buy mismatch');
             assert(quote.sell_amount >= sell_amount, 'Quote sell < amount');
 
-            self._swap_impl(sell_token, buy_token, quote, slippage_tolerance_bps);
+            let bal = self.token_balances.entry(sell_token).read();
+            assert(bal >= quote.sell_amount, 'Insufficient balance');
+            self.token_balances.entry(sell_token).write(bal - quote.sell_amount);
+
+            let config = factory.get_protocol_config();
+            let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
+            let credited = self._do_swap(config.avnu_router, sell_token, buy_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
+            let tracked = self.token_balances.entry(buy_token).read();
+            self.token_balances.entry(buy_token).write(tracked + credited);
+
+            let ts = get_block_timestamp();
+            self.emit(SwapExecuted { token_in: sell_token, token_out: buy_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
             self.reentrancy.end();
         }
 
@@ -897,9 +920,24 @@ mod ZionDefiCard {
             assert(!target_token.is_zero(), 'Invalid target');
             assert(amount > 0, 'Zero amount');
             assert(slippage_tolerance_bps <= MAX_SLIPPAGE, 'Slippage too high');
+
+            assert(quote.sell_token_address == source_token, 'Quote sell mismatch');
+            assert(quote.buy_token_address == target_token, 'Quote buy mismatch');
             assert(quote.sell_amount >= amount, 'Quote sell < amount');
 
-            self._swap_impl(source_token, target_token, quote, slippage_tolerance_bps);
+            let bal = self.token_balances.entry(source_token).read();
+            assert(bal >= quote.sell_amount, 'Insufficient balance');
+            self.token_balances.entry(source_token).write(bal - quote.sell_amount);
+
+            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
+            let config = factory.get_protocol_config();
+            let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
+            let credited = self._do_swap(config.avnu_router, source_token, target_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
+            let tracked = self.token_balances.entry(target_token).read();
+            self.token_balances.entry(target_token).write(tracked + credited);
+
+            let ts = get_block_timestamp();
+            self.emit(SwapExecuted { token_in: source_token, token_out: target_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
             self.reentrancy.end();
         }
 
@@ -1005,6 +1043,11 @@ mod ZionDefiCard {
             out.span()
         }
 
+        fn get_factory_accepted_tokens(self: @ContractState) -> Span<ContractAddress> {
+            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
+            factory.get_accepted_tokens()
+        }
+
         fn get_payment_mode(self: @ContractState) -> PaymentMode { self.payment_mode.read() }
 
         fn is_currency_accepted(self: @ContractState, token: ContractAddress) -> bool {
@@ -1049,10 +1092,9 @@ mod ZionDefiCard {
                 total_currencies: self.currency_count.read(),
                 transfer_delay: self.transfer_delay.read(),
                 settlement_delay: self.settlement_delay.read(),
+                card_status: self.status.read(),
             }
         }
-
-        fn get_card_status(self: @ContractState) -> CardStatus { self.status.read() }
 
         fn get_rate_limit_status(self: @ContractState) -> RateLimitStatus {
             let now = get_block_timestamp();
@@ -1136,39 +1178,19 @@ mod ZionDefiCard {
             out.span()
         }
 
-        fn get_transaction_summary(
-            ref self: ContractState, sig_r: felt252, sig_s: felt252,
-            start_ts: u64, end_ts: u64, offset: u64, limit: u8,
-        ) -> TransactionSummary {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
-            let cap = if limit > 100 { 100_u8 } else { limit };
-            let total = self.transaction_counter.read();
-            let mut spent: u256 = 0; let mut cb: u256 = 0; let mut fees: u256 = 0;
-            let mut count: u64 = 0; let mut collected: u8 = 0;
-            let mut i = offset + 1;
-            loop {
-                if i > total || collected >= cap { break; }
-                let tx = self.transactions.entry(i).read();
-                if tx.timestamp >= start_ts && tx.timestamp <= end_ts {
-                    spent = spent + tx.amount;
-                    cb = cb + tx.cashback_amount;
-                    fees = fees + tx.transaction_fee;
-                    count += 1;
-                    collected += 1;
-                }
-                i += 1;
-            };
-            TransactionSummary {
-                total_spent: spent, total_received: 0, total_cashback_earned: cb,
-                total_swap_fees_paid: 0, total_tx_fees_charged: fees,
-                transaction_count: count, unique_merchants: 0,
-                transactions: ArrayTrait::new().span(),
-            }
-        }
-
         fn get_balance_summary(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary {
             self._assert_owner_or_relayer_pin(sig_r, sig_s);
-            BalanceSummary { balances: self._collect_balances().span(), total_value_usd: 0 }
+            let mut out = ArrayTrait::new();
+            let count = self.currency_count.read();
+            let mut i: u32 = 0;
+            loop {
+                if i >= count { break; }
+                let token = self.accepted_currencies.entry(i).read();
+                let bal = self.token_balances.entry(token).read();
+                out.append(TokenBalance { token, balance: bal, last_updated: self.last_balance_sync.entry(token).read() });
+                i += 1;
+            };
+            BalanceSummary { balances: out.span(), total_value_usd: 0 }
         }
 
         fn verify_owner_login(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> LoginResult {
@@ -1177,7 +1199,18 @@ mod ZionDefiCard {
             self._check_lockout();
             self._verify_pin_or_freeze(owner, sig_r, sig_s);
 
-            let balances = self._collect_balances();
+            // Collect balances
+            let count = self.currency_count.read();
+            let mut out = ArrayTrait::new();
+            let mut i: u32 = 0;
+            loop {
+                if i >= count { break; }
+                let token = self.accepted_currencies.entry(i).read();
+                let bal = self.token_balances.entry(token).read();
+                out.append(TokenBalance { token, balance: bal, last_updated: self.last_balance_sync.entry(token).read() });
+                i += 1;
+            };
+
             let card = get_contract_address();
             let ts = get_block_timestamp();
             self.emit(OwnerVerified { owner, card, timestamp: ts });
@@ -1187,7 +1220,7 @@ mod ZionDefiCard {
                 owner,
                 status: self.status.read(),
                 payment_mode: self.payment_mode.read(),
-                balances: balances.span(),
+                balances: out.span(),
                 deployment_fee_paid: self.deployment_fee_paid.read(),
                 deployment_fee_remaining_usd: self.deployment_fee_remaining_usd.read(),
                 created_at: self.created_at.read(),
@@ -1200,51 +1233,6 @@ mod ZionDefiCard {
 
     #[generate_trait]
     impl InternalImpl of InternalTrait {
-
-        /// Build an array of all accepted-currency balances.
-        fn _collect_balances(self: @ContractState) -> Array<TokenBalance> {
-            let count = self.currency_count.read();
-            let mut out = ArrayTrait::new();
-            let mut i: u32 = 0;
-            loop {
-                if i >= count { break; }
-                let token = self.accepted_currencies.entry(i).read();
-                out.append(TokenBalance {
-                    token,
-                    balance: self.token_balances.entry(token).read(),
-                    last_updated: self.last_balance_sync.entry(token).read(),
-                });
-                i += 1;
-            };
-            out
-        }
-
-        /// Shared swap execution: validates quote, deducts balance, swaps via
-        /// AVNU, credits buy-token balance, and emits SwapExecuted.
-        fn _swap_impl(
-            ref self: ContractState,
-            sell_token: ContractAddress,
-            buy_token: ContractAddress,
-            quote: OffchainQuote,
-            slippage_tolerance_bps: u16,
-        ) {
-            assert(quote.sell_token_address == sell_token, 'Quote sell mismatch');
-            assert(quote.buy_token_address == buy_token, 'Quote buy mismatch');
-
-            let bal = self.token_balances.entry(sell_token).read();
-            assert(bal >= quote.sell_amount, 'Insufficient balance');
-            self.token_balances.entry(sell_token).write(bal - quote.sell_amount);
-
-            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
-            let config = factory.get_protocol_config();
-            let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
-            let credited = self._do_swap(config.avnu_router, sell_token, buy_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
-
-            let tracked = self.token_balances.entry(buy_token).read();
-            self.token_balances.entry(buy_token).write(tracked + credited);
-
-            self.emit(SwapExecuted { token_in: sell_token, token_out: buy_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: get_block_timestamp() });
-        }
 
         /// Execute a swap on the AVNU Exchange via low-level `call_contract_syscall`.
         ///
@@ -1515,7 +1503,6 @@ mod ZionDefiCard {
             let payout_wallet = factory.get_merchant_payout_wallet(req.merchant);
             assert(!payout_wallet.is_zero(), 'No payout wallet');
 
-            let config = factory.get_protocol_config();
             let source_token = self._determine_source_token(req.token, req.amount);
             let swap_needed = source_token != req.token;
             let mut swap_fee: u256 = 0;
@@ -1532,6 +1519,7 @@ mod ZionDefiCard {
                 assert(sell_bal >= q.sell_amount, 'Insufficient balance');
                 self.token_balances.entry(source_token).write(sell_bal - q.sell_amount);
 
+                let config = factory.get_protocol_config();
                 let slippage_adjusted = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
                 let min_out = if slippage_adjusted > req.amount { slippage_adjusted } else { req.amount };
                 self._do_swap(config.avnu_router, source_token, req.token, q.sell_amount, q.buy_amount, min_out, q.fee.integrator_fees_bps, q.routes);
@@ -1556,6 +1544,7 @@ mod ZionDefiCard {
                 self.token_balances.entry(req.token).write(bal - req.amount);
             }
 
+            let config = factory.get_protocol_config();
             let fee_pct = config.transaction_fee_percent;
             let mut fee = (req.amount * fee_pct.into()) / BASIS_POINTS;
 
@@ -1607,20 +1596,24 @@ mod ZionDefiCard {
             };
             self.settlements.entry(request_id).write(settlement);
 
-            req.last_charged_at = ts;
             if is_recurring {
+                req.last_charged_at = ts;
                 req.charge_count += 1;
-            } else {
-                req.charge_count = 1;
-            }
-            if effective_delay == 0 {
-                if !is_recurring {
-                    req.status = RequestStatus::Settled;
-                    self.request_status.entry(request_id).write(RequestStatus::Settled);
+                if effective_delay == 0 {
+                } else {
+                    req.status = RequestStatus::AwaitingSettlement;
+                    self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement);
                 }
             } else {
-                req.status = RequestStatus::AwaitingSettlement;
-                self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement);
+                if effective_delay == 0 {
+                    req.status = RequestStatus::Settled;
+                    self.request_status.entry(request_id).write(RequestStatus::Settled);
+                } else {
+                    req.status = RequestStatus::AwaitingSettlement;
+                    self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement);
+                }
+                req.last_charged_at = ts;
+                req.charge_count = 1;
             }
             let req_merchant = req.merchant;
             let req_token = req.token;
@@ -1714,35 +1707,38 @@ mod ZionDefiCard {
         }
 
         fn _cancel_all_active_payments(ref self: ContractState) {
-            self._cancel_requests(Zero::zero());
-        }
-
-        fn _cancel_merchant_payments(ref self: ContractState, merchant: ContractAddress) {
-            self._cancel_requests(merchant);
-        }
-
-        fn _cancel_requests(ref self: ContractState, filter_merchant: ContractAddress) {
             let total = self.request_counter.read();
-            let check_all = filter_merchant.is_zero();
             let mut i: u64 = 1;
             loop {
                 if i > total { break; }
                 let status = self.request_status.entry(i).read();
-                if status == RequestStatus::Pending || status == RequestStatus::Approved || status == RequestStatus::AwaitingSettlement {
-                    let matches = if check_all {
-                        true
-                    } else {
-                        self.payment_requests.entry(i).read().merchant == filter_merchant
-                    };
-                    if matches {
-                        if status == RequestStatus::AwaitingSettlement {
-                            self._refund_settlement(i);
-                        } else {
-                            self.request_status.entry(i).write(RequestStatus::Cancelled);
-                            let mut req = self.payment_requests.entry(i).read();
-                            req.status = RequestStatus::Cancelled;
-                            self.payment_requests.entry(i).write(req);
-                        }
+                if status == RequestStatus::Pending || status == RequestStatus::Approved {
+                    self.request_status.entry(i).write(RequestStatus::Cancelled);
+                    let mut req = self.payment_requests.entry(i).read();
+                    req.status = RequestStatus::Cancelled;
+                    self.payment_requests.entry(i).write(req);
+                } else if status == RequestStatus::AwaitingSettlement {
+                    self._refund_settlement(i);
+                }
+                i += 1;
+            };
+        }
+
+        fn _cancel_merchant_payments(ref self: ContractState, merchant: ContractAddress) {
+            let total = self.request_counter.read();
+            let mut i: u64 = 1;
+            loop {
+                if i > total { break; }
+                let req = self.payment_requests.entry(i).read();
+                if req.merchant == merchant {
+                    let status = self.request_status.entry(i).read();
+                    if status == RequestStatus::Pending || status == RequestStatus::Approved {
+                        self.request_status.entry(i).write(RequestStatus::Cancelled);
+                        let mut r = req;
+                        r.status = RequestStatus::Cancelled;
+                        self.payment_requests.entry(i).write(r);
+                    } else if status == RequestStatus::AwaitingSettlement {
+                        self._refund_settlement(i);
                     }
                 }
                 i += 1;

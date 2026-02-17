@@ -149,27 +149,6 @@ pub struct TransactionRecord {
     pub transaction_type: felt252,
 }
 
-/// Fraud detection alert.
-#[derive(Drop, Serde, starknet::Store)]
-pub struct FraudAlert {
-    pub alert_id: u64,
-    pub request_id: u64,
-    pub merchant: ContractAddress,
-    pub alert_type: felt252,
-    pub severity: u8,
-    pub message: ByteArray,
-    pub timestamp: u64,
-    pub auto_blocked: bool,
-}
-
-/// Lightweight fraud evaluation result (not stored).
-#[derive(Drop, Serde)]
-pub struct FraudScore {
-    pub risk_level: u8,
-    pub flags: Span<felt252>,
-    pub recommendation: felt252,
-}
-
 /// Token balance snapshot.
 #[derive(Drop, Serde)]
 pub struct TokenBalance {
@@ -183,19 +162,6 @@ pub struct TokenBalance {
 pub struct BalanceSummary {
     pub balances: Span<TokenBalance>,
     pub total_value_usd: u256,
-}
-
-/// Aggregate transaction summary for a time window.
-#[derive(Drop, Serde)]
-pub struct TransactionSummary {
-    pub total_spent: u256,
-    pub total_received: u256,
-    pub total_cashback_earned: u256,
-    pub total_swap_fees_paid: u256,
-    pub total_tx_fees_charged: u256,
-    pub transaction_count: u64,
-    pub unique_merchants: u32,
-    pub transactions: Span<TransactionRecord>,
 }
 
 /// Snapshot of rate-limit counters.

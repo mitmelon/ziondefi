@@ -6,7 +6,7 @@ use starknet::{ContractAddress, ClassHash};
 use super::types::{
     PaymentMode, CardConfig, CardInfo, CardStatus, RateLimitStatus,
     PaymentRequest, RequestStatus, TransactionSummary,
-    BalanceSummary, SettlementInfo, LoginResult,
+    BalanceSummary, FraudAlert, SettlementInfo, LoginResult,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
     PendingTransfer,
 };
@@ -82,6 +82,7 @@ pub trait IZionDefiCard<TContractState> {
 
     // ---- Views (no PIN required) -------------------------------------------
     fn get_accepted_currencies(self: @TContractState) -> Span<ContractAddress>;
+    fn get_factory_accepted_tokens(self: @TContractState) -> Span<ContractAddress>;
     fn get_payment_mode(self: @TContractState) -> PaymentMode;
     fn is_currency_accepted(self: @TContractState, token: ContractAddress) -> bool;
     fn get_pending_requests(self: @TContractState, offset: u64, limit: u8) -> Span<PaymentRequest>;
@@ -90,7 +91,6 @@ pub trait IZionDefiCard<TContractState> {
     fn get_request_status(self: @TContractState, request_id: u64) -> RequestStatus;
     fn is_merchant_blacklisted(self: @TContractState, merchant: ContractAddress) -> bool;
     fn get_card_info(self: @TContractState) -> CardInfo;
-    fn get_card_status(self: @TContractState) -> CardStatus;
     fn get_rate_limit_status(self: @TContractState) -> RateLimitStatus;
     fn get_merchant_spend_limit(self: @TContractState, merchant: ContractAddress) -> u256;
     fn get_auto_approve_threshold(self: @TContractState) -> u256;
@@ -103,9 +103,7 @@ pub trait IZionDefiCard<TContractState> {
     fn get_transactions(self: @TContractState, offset: u64, limit: u8) -> Span<PaymentRequest>;
 
     // ---- PIN-protected views -----------------------------------------------
-    fn get_transaction_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252, start_ts: u64, end_ts: u64, offset: u64, limit: u8) -> TransactionSummary;
     fn get_balance_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary;
-
     // ---- dApp Owner Verification / Login -----------------------------------
     fn verify_owner_login(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> LoginResult;
 }
