@@ -105,6 +105,10 @@ mod ZionDefiCard {
         autoswap_enabled: Map<ContractAddress, bool>,
         autoswap_rule_count: u32,
         autoswap_sources: Map<u32, ContractAddress>,
+
+        transfer_delay: u64, 
+        pending_transfers: Map<u64, SettlementInfo>,
+        transfer_counter: u64,
     }
 
     #[event]
@@ -697,18 +701,89 @@ mod ZionDefiCard {
             self.reentrancy.end();
         }
 
-        fn withdraw_funds(ref self: ContractState, token: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252) {
+        fn transfer_funds(ref self: ContractState, token: ContractAddress, to: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252
+        ) -> u64 {
             self.reentrancy.start();
             self._assert_not_frozen();
             self._assert_owner_pin(sig_r, sig_s);
+            
             assert(amount > 0, 'Zero amount');
+            assert(!to.is_zero(), 'Invalid recipient');
+            
             let bal = self.token_balances.entry(token).read();
             assert(bal >= amount, 'Insufficient balance');
-            self.token_balances.entry(token).write(bal - amount);
-            let d = IERC20Dispatcher { contract_address: token };
-            assert(d.transfer(self.owner.read(), amount), 'Transfer failed');
-            self.emit(FundsWithdrawn { token, amount, timestamp: get_block_timestamp() });
+            
+            // Immediate deduction from tracked balance
+            self.token_balances.entry(token).write(bal - amount); 
+            
+            let request_id = self.request_counter.read() + 1;
+            self.request_counter.write(request_id);
+            
+            let ts = get_block_timestamp();
+            let delay = self.transfer_delay.read(); // User-adjustable delay
+            let settle_at = ts + delay;
+
+            // Store as a settlement record to reuse existing infrastructure [cite: 319, 321]
+            let transfer_info = SettlementInfo {
+                request_id,
+                amount_for_merchant: amount,
+                admin_fee: 0,
+                cashback: 0,
+                token,
+                payout_wallet: to,
+                merchant: self.owner.read(), // Using owner as the "merchant" for tracking
+                settle_at,
+                settled: false,
+                cancelled: false,
+                swap_occurred: false,
+                token_in: token,
+                swap_fee: 0,
+            };
+            
+            self.settlements.entry(request_id).write(transfer_info);
+            self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement); [cite: 323]
+            
+            self.reentrancy.end(); [cite: 126]
+            request_id
+        }
+
+        fn finalize_transfer(ref self: ContractState, transfer_id: u64) {
+            self.reentrancy.start();
+            let mut info = self.settlements.entry(transfer_id).read();
+            
+            assert(info.request_id != 0, 'Transfer not found');
+            assert(!info.settled && !info.cancelled, 'Already processed'); 
+            assert(get_block_timestamp() >= info.settle_at, 'Delay not elapsed');
+
+            info.settled = true;
+            self.settlements.entry(transfer_id).write(info);
+            
+            // Execute the actual ERC20 transfer on-chain [cite: 102]
+            let d = IERC20Dispatcher { contract_address: info.token };
+            assert(d.transfer(info.payout_wallet, info.amount_for_merchant), 'Transfer failed');
+            
+            self.request_status.entry(transfer_id).write(RequestStatus::Settled);
             self.reentrancy.end();
+        }
+
+        fn cancel_transfer(ref self: ContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252) {
+            self._assert_owner_pin(sig_r, sig_s);
+            let mut info = self.settlements.entry(transfer_id).read();
+            
+            assert(!info.settled && !info.cancelled, 'Finalized or already cancelled');
+
+            let bal = self.token_balances.entry(info.token).read();
+            self.token_balances.entry(info.token).write(bal + info.amount_for_merchant);
+            
+            info.cancelled = true;
+            self.settlements.entry(transfer_id).write(info);
+            self.request_status.entry(transfer_id).write(RequestStatus::Cancelled);
+        }
+
+        fn update_transfer_delay(ref self: ContractState, new_delay: u64, sig_r: felt252, sig_s: felt252) {
+            self._assert_owner_pin(sig_r, sig_s);
+            assert(new_delay <= 86400, 'Delay exceeds 24h');
+            self.transfer_delay.write(new_delay);
         }
 
         fn sync_balances(

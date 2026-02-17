@@ -32,6 +32,8 @@ pub const SECONDS_PER_DAY: u64 = 86_400;
 pub const DEFAULT_SETTLEMENT_DELAY: u64 = 1800;
 /// Anomaly multiplier — if a charge exceeds largest_charge * this factor, auto-freeze.
 pub const ANOMALY_MULTIPLIER: u256 = 3;
+pub const DEFAULT_TRANSFER_DELAY: u64 = 1800; // 30 minutes [cite: 447]
+
 
 // ============================================================================
 // ENUMS
@@ -329,4 +331,11 @@ pub struct AvnuFee {
     pub avnu_fees_bps: u128,
     pub integrator_fees: u256,
     pub integrator_fees_bps: u128,
+}
+
+#[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
+pub enum TransferStatus {
+    Pending,
+    Executed,
+    Cancelled,
 }
