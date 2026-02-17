@@ -25,11 +25,11 @@ mod ZionDefiCard {
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
         TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
-        LoginResult, OffchainQuote, PendingTransfer,
-        CHARGE_COOLDOWN, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION,
+        OffchainQuote,
+        CHARGE_COOLDOWN,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
-        ANOMALY_MULTIPLIER, TRANSFER_DELAY,
+        ANOMALY_MULTIPLIER,
     };
     use ziondefi::interfaces::{
         IZionDefiFactoryDispatcher, IZionDefiFactoryDispatcherTrait,
@@ -99,14 +99,11 @@ mod ZionDefiCard {
         largest_charge_amount: u256,
         idempotency_keys: Map<felt252, bool>,
         deployment_fee_usd: u256,
-        deployment_fee_remaining_usd: u256,
         deployment_fee_paid: bool,
         autoswap_target: Map<ContractAddress, ContractAddress>,
         autoswap_enabled: Map<ContractAddress, bool>,
         autoswap_rule_count: u32,
         autoswap_sources: Map<u32, ContractAddress>,
-        transfer_counter: u64,
-        pending_transfers: Map<u64, PendingTransfer>,
     }
 
     #[event]
@@ -140,15 +137,10 @@ mod ZionDefiCard {
         LimitsUpdated: LimitsUpdated,
         AnomalyDetected: AnomalyDetected,
         DeploymentFeePaid: DeploymentFeePaid,
-        DeploymentFeePartialPayment: DeploymentFeePartialPayment,
         CardActivated: CardActivated,
-        OwnerVerified: OwnerVerified,
         AutoSwapConfigured: AutoSwapConfigured,
         AutoSwapRemoved: AutoSwapRemoved,
         ManualSwapExecuted: ManualSwapExecuted,
-        TransferInitiated: TransferInitiated,
-        TransferExecuted: TransferExecuted,
-        TransferCancelled: TransferCancelled,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -202,23 +194,13 @@ mod ZionDefiCard {
     #[derive(Drop, starknet::Event)]
     struct DeploymentFeePaid { token: ContractAddress, amount_in_token: u256, fee_usd: u256, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
-    struct DeploymentFeePartialPayment { token: ContractAddress, amount_in_token: u256, paid_usd: u256, remaining_usd: u256, timestamp: u64 }
-    #[derive(Drop, starknet::Event)]
     struct CardActivated { #[key] owner: ContractAddress, timestamp: u64 }
-    #[derive(Drop, starknet::Event)]
-    struct OwnerVerified { #[key] owner: ContractAddress, #[key] card: ContractAddress, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct AutoSwapConfigured { #[key] source_token: ContractAddress, #[key] target_token: ContractAddress, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct AutoSwapRemoved { #[key] source_token: ContractAddress, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct ManualSwapExecuted { token_in: ContractAddress, token_out: ContractAddress, amount_in: u256, amount_out: u256, timestamp: u64 }
-    #[derive(Drop, starknet::Event)]
-    struct TransferInitiated { #[key] transfer_id: u64, #[key] recipient: ContractAddress, token: ContractAddress, amount: u256, execute_after: u64, timestamp: u64 }
-    #[derive(Drop, starknet::Event)]
-    struct TransferExecuted { #[key] transfer_id: u64, #[key] recipient: ContractAddress, token: ContractAddress, amount: u256, timestamp: u64 }
-    #[derive(Drop, starknet::Event)]
-    struct TransferCancelled { #[key] transfer_id: u64, token: ContractAddress, amount: u256, timestamp: u64 }
 
     #[constructor]
     fn constructor(
@@ -242,7 +224,6 @@ mod ZionDefiCard {
         self.authorized_relayer.write(authorized_relayer);
         self.factory.write(get_caller_address());
         self.deployment_fee_usd.write(deployment_fee_usd);
-        self.deployment_fee_remaining_usd.write(deployment_fee_usd);
         self.deployment_fee_paid.write(false);
         self.status.write(CardStatus::PendingActivation);
         let ts = get_block_timestamp();
@@ -348,8 +329,8 @@ mod ZionDefiCard {
             self.emit(ConfigUpdated { key: 'merchant_limit', timestamp: get_block_timestamp() });
         }
 
-        fn set_token_price_feed(ref self: ContractState, token: ContractAddress, pair_id: felt252, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+        fn set_token_price_feed(ref self: ContractState, token: ContractAddress, pair_id: felt252) {
+            self._assert_owner_or_relayer();
             self.token_price_feed_ids.entry(token).write(pair_id);
         }
 
@@ -661,7 +642,21 @@ mod ZionDefiCard {
             let mut remaining = amount;
 
             if !self.deployment_fee_paid.read() {
-                remaining = self._collect_deployment_fee(token, remaining);
+                let fee_usd = self.deployment_fee_usd.read();
+                if fee_usd > 0 {
+                    let manual_id = self.token_price_feed_ids.entry(token).read();
+                    let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, fee_usd, manual_id);
+                    assert(fee_in_token > 0, 'Price feed unavailable');
+                    assert(remaining >= fee_in_token, 'Deposit < deployment fee');
+                    let config = factory.get_protocol_config();
+                    assert(d.transfer(config.admin_wallet, fee_in_token), 'Fee transfer failed');
+                    remaining -= fee_in_token;
+                    self.deployment_fee_paid.write(true);
+                    let ts = get_block_timestamp();
+                    self.emit(DeploymentFeePaid { token, amount_in_token: fee_in_token, fee_usd, timestamp: ts });
+                    self.status.write(CardStatus::Active);
+                    self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
+                }
             }
 
             if remaining > 0 {
@@ -672,109 +667,29 @@ mod ZionDefiCard {
             self.reentrancy.end();
         }
 
-        fn transfer(ref self: ContractState, action: felt252, token: ContractAddress, amount: u256, recipient: ContractAddress, sig_r: felt252, sig_s: felt252) {
+        fn withdraw_funds(ref self: ContractState, token: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252) {
             self.reentrancy.start();
             self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(amount > 0, 'Zero amount');
             let bal = self.token_balances.entry(token).read();
             assert(bal >= amount, 'Insufficient balance');
-
-            let ts = get_block_timestamp();
-
-            if action == 'withdraw' {
-                // Immediate withdrawal to owner — no delay needed
-                self.token_balances.entry(token).write(bal - amount);
-                let d = IERC20Dispatcher { contract_address: token };
-                assert(d.transfer(self.owner.read(), amount), 'Transfer failed');
-                self.emit(FundsWithdrawn { token, amount, timestamp: ts });
-            } else if action == 'transfer' {
-                assert(!recipient.is_zero(), 'Invalid recipient');
-                assert(recipient != self.owner.read(), 'Use withdraw for self');
-
-                // Reserve funds immediately
-                self.token_balances.entry(token).write(bal - amount);
-
-                let transfer_id = self.transfer_counter.read() + 1;
-                self.transfer_counter.write(transfer_id);
-                let execute_after = ts + TRANSFER_DELAY;
-
-                let pending = PendingTransfer {
-                    transfer_id,
-                    token,
-                    amount,
-                    recipient,
-                    created_at: ts,
-                    execute_after,
-                    executed: false,
-                    cancelled: false,
-                };
-                self.pending_transfers.entry(transfer_id).write(pending);
-                self.emit(TransferInitiated { transfer_id, recipient, token, amount, execute_after, timestamp: ts });
-            } else {
-                assert(false, 'Invalid action');
-            }
-
+            self.token_balances.entry(token).write(bal - amount);
+            let d = IERC20Dispatcher { contract_address: token };
+            assert(d.transfer(self.owner.read(), amount), 'Transfer failed');
+            self.emit(FundsWithdrawn { token, amount, timestamp: get_block_timestamp() });
             self.reentrancy.end();
-        }
-
-        fn execute_transfer(ref self: ContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252) {
-            self.reentrancy.start();
-            self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
-
-            let mut pt = self.pending_transfers.entry(transfer_id).read();
-            assert(pt.transfer_id != 0, 'Transfer not found');
-            assert(!pt.executed, 'Already executed');
-            assert(!pt.cancelled, 'Already cancelled');
-
-            let ts = get_block_timestamp();
-            assert(ts >= pt.execute_after, 'Delay not elapsed');
-
-            pt.executed = true;
-            self.pending_transfers.entry(transfer_id).write(pt);
-
-            let d = IERC20Dispatcher { contract_address: pt.token };
-            assert(d.transfer(pt.recipient, pt.amount), 'Transfer failed');
-            self.emit(TransferExecuted { transfer_id, recipient: pt.recipient, token: pt.token, amount: pt.amount, timestamp: ts });
-            self.reentrancy.end();
-        }
-
-        fn cancel_transfer(ref self: ContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252) {
-            self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
-
-            let mut pt = self.pending_transfers.entry(transfer_id).read();
-            assert(pt.transfer_id != 0, 'Transfer not found');
-            assert(!pt.executed, 'Already executed');
-            assert(!pt.cancelled, 'Already cancelled');
-
-            pt.cancelled = true;
-            self.pending_transfers.entry(transfer_id).write(pt);
-
-            // Refund reserved funds back to card balance
-            let bal = self.token_balances.entry(pt.token).read();
-            self.token_balances.entry(pt.token).write(bal + pt.amount);
-
-            self.emit(TransferCancelled { transfer_id, token: pt.token, amount: pt.amount, timestamp: get_block_timestamp() });
-        }
-
-        fn get_pending_transfer(self: @ContractState, transfer_id: u64) -> PendingTransfer {
-            let pt = self.pending_transfers.entry(transfer_id).read();
-            assert(pt.transfer_id != 0, 'Transfer not found');
-            pt
         }
 
         fn sync_balances(
             ref self: ContractState,
             tokens: Span<ContractAddress>,
-            sig_r: felt252,
-            sig_s: felt252,
         ) {
             self.reentrancy.start();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_or_relayer();
             let card = get_contract_address();
             let ts = get_block_timestamp();
+            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
 
             let mut i: u32 = 0;
             loop {
@@ -789,7 +704,20 @@ mod ZionDefiCard {
 
                     // Handle deployment fee from untracked deposits
                     if !self.deployment_fee_paid.read() {
-                        self._collect_deployment_fee(token, surplus);
+                        let fee_usd = self.deployment_fee_usd.read();
+                        if fee_usd > 0 {
+                            let manual_id = self.token_price_feed_ids.entry(token).read();
+                            let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, fee_usd, manual_id);
+                            if fee_in_token > 0 && surplus >= fee_in_token {
+                                let config = factory.get_protocol_config();
+                                if d.transfer(config.admin_wallet, fee_in_token) {
+                                    self.deployment_fee_paid.write(true);
+                                    self.emit(DeploymentFeePaid { token, amount_in_token: fee_in_token, fee_usd, timestamp: ts });
+                                    self.status.write(CardStatus::Active);
+                                    self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
+                                }
+                            }
+                        }
                     }
 
                     // Update tracked to actual (after any deployment fee deduction)
@@ -1104,7 +1032,7 @@ mod ZionDefiCard {
         }
 
         fn get_deployment_fee_debt(self: @ContractState) -> u256 {
-            if self.deployment_fee_paid.read() { 0 } else { self.deployment_fee_remaining_usd.read() }
+            if self.deployment_fee_paid.read() { 0 } else { self.deployment_fee_usd.read() }
         }
 
         fn get_auto_swap_target(self: @ContractState, source_token: ContractAddress) -> ContractAddress {
@@ -1115,20 +1043,34 @@ mod ZionDefiCard {
             self.autoswap_enabled.entry(source_token).read()
         }
 
+        fn get_all_auto_swap_rules(self: @ContractState) -> Span<(ContractAddress, ContractAddress)> {
+            let count = self.autoswap_rule_count.read();
+            let mut out = ArrayTrait::new();
+            let mut i: u32 = 0;
+            loop {
+                if i >= count { break; }
+                let src = self.autoswap_sources.entry(i).read();
+                if self.autoswap_enabled.entry(src).read() {
+                    let tgt = self.autoswap_target.entry(src).read();
+                    out.append((src, tgt));
+                }
+                i += 1;
+            };
+            out.span()
+        }
+
         fn rotate_pin(ref self: ContractState, new_public_key: felt252, old_sig_r: felt252, old_sig_s: felt252) {
             self._assert_owner();
             self.pin.rotate_pin(new_public_key, old_sig_r, old_sig_s);
         }
 
         fn get_pin_public_key(self: @ContractState, user: ContractAddress) -> felt252 {
-            let caller = get_caller_address();
-            assert(caller == self.owner.read() || caller == self.authorized_relayer.read(), 'Unauthorized');
+            self._assert_owner_or_relayer();
             self.pin.get_pin_public_key(user)
         }
 
         fn get_pin_nonce(self: @ContractState, user: ContractAddress) -> felt252 {
-            let caller = get_caller_address();
-            assert(caller == self.owner.read() || caller == self.authorized_relayer.read(), 'Unauthorized');
+            self._assert_owner_or_relayer();
             self.pin.get_pin_nonce(user)
         }
 
@@ -1207,48 +1149,6 @@ mod ZionDefiCard {
             };
             out.span()
         }
-
-        // ================================================================
-        // I. DAPP OWNER VERIFICATION / LOGIN
-        // ================================================================
-        /// Verify card ownership via PIN proof.
-        /// Any caller (dApp) can invoke this.  The owner signs a challenge
-        /// with their PIN private key; if valid the contract returns the
-        /// card address, owner, status and all token balances.
-        fn verify_owner_login(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> LoginResult {
-            let owner = self.owner.read();
-            // Verify PIN — will revert & auto-freeze on 3rd consecutive failure
-            self._check_lockout();
-            self._verify_pin_or_freeze(owner, sig_r, sig_s);
-
-            // Collect balances
-            let count = self.currency_count.read();
-            let mut out = ArrayTrait::new();
-            let mut i: u32 = 0;
-            loop {
-                if i >= count { break; }
-                let token = self.accepted_currencies.entry(i).read();
-                let bal = self.token_balances.entry(token).read();
-                out.append(TokenBalance { token, balance: bal, last_updated: self.last_balance_sync.entry(token).read() });
-                i += 1;
-            };
-
-            let card = get_contract_address();
-            let ts = get_block_timestamp();
-            self.emit(OwnerVerified { owner, card, timestamp: ts });
-
-            LoginResult {
-                card_address: card,
-                owner,
-                status: self.status.read(),
-                payment_mode: self.payment_mode.read(),
-                balances: out.span(),
-                deployment_fee_paid: self.deployment_fee_paid.read(),
-                deployment_fee_remaining_usd: self.deployment_fee_remaining_usd.read(),
-                created_at: self.created_at.read(),
-                verified_at: ts,
-            }
-        }
     }
 
     // ====================================================================
@@ -1313,58 +1213,6 @@ mod ZionDefiCard {
             credited
         }
 
-        /// Shared deployment-fee collection logic used by both `deposit_funds`
-        /// and `sync_balances`.  Deducts as much of the remaining deployment
-        /// fee as possible from `available` tokens.  Returns the amount of
-        /// tokens left over after any fee deduction.
-        fn _collect_deployment_fee(
-            ref self: ContractState,
-            token: ContractAddress,
-            available: u256,
-        ) -> u256 {
-            let remaining_fee_usd = self.deployment_fee_remaining_usd.read();
-            if remaining_fee_usd == 0 || available == 0 {
-                return available;
-            }
-            let manual_id = self.token_price_feed_ids.entry(token).read();
-            let full_fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, remaining_fee_usd, manual_id);
-            if full_fee_in_token == 0 {
-                return available; // price feed unavailable — skip, don't block deposit
-            }
-
-            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
-            let config = factory.get_protocol_config();
-            let d = IERC20Dispatcher { contract_address: token };
-            let ts = get_block_timestamp();
-
-            if available >= full_fee_in_token {
-                // Covers entire remaining fee
-                assert(d.transfer(config.admin_wallet, full_fee_in_token), 'Fee transfer failed');
-                self.deployment_fee_remaining_usd.write(0);
-                self.deployment_fee_paid.write(true);
-                self.emit(DeploymentFeePaid { token, amount_in_token: full_fee_in_token, fee_usd: remaining_fee_usd, timestamp: ts });
-                self.status.write(CardStatus::Active);
-                self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
-                return available - full_fee_in_token;
-            }
-
-            // Partial payment — take everything available
-            let partial_token = available;
-            let paid_usd = Price_Oracle::convert_token_to_usd_auto(token, partial_token, manual_id);
-            assert(d.transfer(config.admin_wallet, partial_token), 'Fee transfer failed');
-            let new_remaining = if paid_usd >= remaining_fee_usd { 0 } else { remaining_fee_usd - paid_usd };
-            self.deployment_fee_remaining_usd.write(new_remaining);
-            if new_remaining == 0 {
-                self.deployment_fee_paid.write(true);
-                self.status.write(CardStatus::Active);
-                self.emit(DeploymentFeePaid { token, amount_in_token: partial_token, fee_usd: remaining_fee_usd, timestamp: ts });
-                self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
-            } else {
-                self.emit(DeploymentFeePartialPayment { token, amount_in_token: partial_token, paid_usd, remaining_usd: new_remaining, timestamp: ts });
-            }
-            0 // all tokens consumed by partial fee
-        }
-
         fn _assert_owner(self: @ContractState) {
             assert(get_caller_address() == self.owner.read(), 'Not owner');
         }
@@ -1373,40 +1221,29 @@ mod ZionDefiCard {
             assert(get_caller_address() == self.admin.read(), 'Not admin');
         }
 
+        fn _assert_owner_or_relayer(self: @ContractState) {
+            let caller = get_caller_address();
+            assert(caller == self.owner.read() || caller == self.authorized_relayer.read(), 'Unauthorized');
+        }
+
         fn _assert_owner_or_relayer_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
             self._check_lockout();
             let caller = get_caller_address();
             let owner = self.owner.read();
-            assert(caller == owner || caller == self.authorized_relayer.read(), 'Unauthorized');
-            self._verify_pin_or_freeze(owner, sig_r, sig_s);
+            if caller == owner {
+                self.pin._verify_pin(owner, sig_r, sig_s);
+                self.failed_pin_attempts.write(0);
+            } else {
+                assert(caller == self.authorized_relayer.read(), 'Unauthorized');
+            }
         }
 
         fn _assert_owner_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
             self._check_lockout();
             let owner = self.owner.read();
             assert(get_caller_address() == owner, 'Not owner');
-            self._verify_pin_or_freeze(owner, sig_r, sig_s);
-        }
-
-        /// Core PIN verification with failure counter & auto-freeze.
-        /// On success: resets `failed_pin_attempts` to 0.
-        /// On failure: increments counter; if it reaches MAX_FAILED_ATTEMPTS
-        /// the card is frozen and a lockout timer is set.
-        fn _verify_pin_or_freeze(ref self: ContractState, owner: ContractAddress, sig_r: felt252, sig_s: felt252) {
-            let valid = self.pin._try_verify_pin(owner, sig_r, sig_s);
-            if valid {
-                self.failed_pin_attempts.write(0);
-                return;
-            }
-            // — failure path —
-            let attempts = self.failed_pin_attempts.read() + 1;
-            self.failed_pin_attempts.write(attempts);
-            if attempts >= MAX_FAILED_ATTEMPTS {
-                self.status.write(CardStatus::Frozen);
-                self.lockout_until.write(get_block_timestamp() + LOCKOUT_DURATION);
-                self.emit(CardFrozen { timestamp: get_block_timestamp() });
-            }
-            assert(false, 'Invalid PIN signature');
+            self.pin._verify_pin(owner, sig_r, sig_s);
+            self.failed_pin_attempts.write(0);
         }
 
         fn _check_lockout(self: @ContractState) {
@@ -1811,11 +1648,6 @@ mod ZionDefiCard {
     impl UpgradeableImpl of IUpgradeable<ContractState> {
         fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
             assert(get_caller_address() == self.admin.read(), 'Admin only');
-            self.upgradeable.upgrade(new_class_hash);
-        }
-    }
-}
-er_address() == self.admin.read(), 'Admin only');
             self.upgradeable.upgrade(new_class_hash);
         }
     }

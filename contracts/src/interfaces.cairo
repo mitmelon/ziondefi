@@ -2,13 +2,12 @@
 // ZionDefi Protocol v1.0 — Interface Definitions
 // All trait interfaces consumed or exposed by the protocol contracts.
 
-use starknet::{ContractAddress, ClassHash};
+use starknet::ContractAddress;
 use super::types::{
     PaymentMode, CardConfig, CardInfo, CardStatus, RateLimitStatus,
     PaymentRequest, RequestStatus, TransactionSummary,
-    BalanceSummary, FraudAlert, SettlementInfo, LoginResult,
+    BalanceSummary, FraudAlert, SettlementInfo,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
-    PendingTransfer,
 };
 
 // ============================================================================
@@ -26,11 +25,7 @@ pub trait IZionDefiCard<TContractState> {
     fn update_spending_limits(ref self: TContractState, max_tx_amount: u256, daily_tx_limit: u16, daily_spend_limit: u256, sig_r: felt252, sig_s: felt252);
     fn set_merchant_spend_limit(ref self: TContractState, merchant: ContractAddress, max_amount_usd: u256, sig_r: felt252, sig_s: felt252);
     fn remove_merchant_spend_limit(ref self: TContractState, merchant: ContractAddress, sig_r: felt252, sig_s: felt252);
-    fn set_token_price_feed(ref self: TContractState, token: ContractAddress, pair_id: felt252, sig_r: felt252, sig_s: felt252);
-    fn set_transfer_delay(ref self: TContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252);
-    fn set_settlement_delay(ref self: TContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252);
-    fn get_transfer_delay(self: @TContractState) -> u64;
-    fn get_settlement_delay(self: @TContractState) -> u64;
+    fn set_token_price_feed(ref self: TContractState, token: ContractAddress, pair_id: felt252);
 
     // ---- Owner Management (owner-only + PIN) -------------------------------
     fn change_owner(ref self: TContractState, new_owner: ContractAddress, sig_r: felt252, sig_s: felt252);
@@ -54,11 +49,8 @@ pub trait IZionDefiCard<TContractState> {
 
     // ---- Funds Management --------------------------------------------------
     fn deposit_funds(ref self: TContractState, token: ContractAddress, amount: u256);
-    fn transfer(ref self: TContractState, action: felt252, token: ContractAddress, amount: u256, recipient: ContractAddress, sig_r: felt252, sig_s: felt252);
-    fn execute_transfer(ref self: TContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252);
-    fn cancel_transfer(ref self: TContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252);
-    fn get_pending_transfer(self: @TContractState, transfer_id: u64) -> PendingTransfer;
-    fn sync_balances(ref self: TContractState, tokens: Span<ContractAddress>, sig_r: felt252, sig_s: felt252);
+    fn withdraw_funds(ref self: TContractState, token: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252);
+    fn sync_balances(ref self: TContractState, tokens: Span<ContractAddress>);
 
     // ---- Swap & Auto-Swap Management (owner/relayer + PIN) -----------------
     fn set_auto_swap(ref self: TContractState, source_token: ContractAddress, target_token: ContractAddress, sig_r: felt252, sig_s: felt252);
@@ -101,15 +93,13 @@ pub trait IZionDefiCard<TContractState> {
     fn get_deployment_fee_debt(self: @TContractState) -> u256;
     fn get_auto_swap_target(self: @TContractState, source_token: ContractAddress) -> ContractAddress;
     fn is_auto_swap_enabled(self: @TContractState, source_token: ContractAddress) -> bool;
+    fn get_all_auto_swap_rules(self: @TContractState) -> Span<(ContractAddress, ContractAddress)>;
     fn get_transactions(self: @TContractState, offset: u64, limit: u8) -> Span<PaymentRequest>;
 
     // ---- PIN-protected views -----------------------------------------------
     fn get_transaction_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252, start_ts: u64, end_ts: u64, offset: u64, limit: u8) -> TransactionSummary;
     fn get_balance_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary;
     fn get_fraud_alerts(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> Span<FraudAlert>;
-
-    // ---- dApp Owner Verification / Login -----------------------------------
-    fn verify_owner_login(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> LoginResult;
 }
 
 // ============================================================================
@@ -128,7 +118,6 @@ pub trait IZionDefiFactory<TContractState> {
     fn set_user_cashback_percent(ref self: TContractState, new_percent: u8);
     fn set_burn_fee(ref self: TContractState, new_fee: u256);
     fn set_avnu_router(ref self: TContractState, avnu_router: ContractAddress);
-    fn set_vault_class_hash(ref self: TContractState, new_class_hash: ClassHash);
     fn pause(ref self: TContractState);
     fn unpause(ref self: TContractState);
 
@@ -172,12 +161,9 @@ pub trait IZionDefiFactory<TContractState> {
     fn get_merchant_reputation(self: @TContractState, merchant: ContractAddress) -> MerchantReputation;
     fn is_card_deployed(self: @TContractState, card: ContractAddress) -> bool;
     fn get_total_cards_deployed(self: @TContractState) -> u64;
-    fn get_vault_class_hash(self: @TContractState) -> ClassHash;
     fn get_total_merchants(self: @TContractState) -> u64;
     fn is_token_accepted(self: @TContractState, token: ContractAddress) -> bool;
     fn get_accepted_tokens(self: @TContractState) -> Span<ContractAddress>;
     fn get_effective_settlement_delay(self: @TContractState, merchant: ContractAddress) -> u64;
     fn is_merchant_instant_settlement(self: @TContractState, merchant: ContractAddress) -> bool;
-}
-te, merchant: ContractAddress) -> bool;
 }
