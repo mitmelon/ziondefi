@@ -102,6 +102,11 @@ pub trait IZionDefiCard<TContractState> {
 
     // ---- dApp Owner Verification / Login -----------------------------------
     fn verify_owner_login(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> LoginResult;
+
+    fn transfer_funds(ref self: TContractState, token: ContractAddress, to: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252) -> u64;
+    fn finalize_transfer(ref self: TContractState, transfer_id: u64);
+    fn cancel_transfer(ref self: TContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252);
+    fn update_transfer_delay(ref self: TContractState, new_delay: u64, sig_r: felt252, sig_s: felt252);
 }
 
 // ============================================================================

@@ -109,6 +109,7 @@ mod ZionDefiCard {
         transfer_delay: u64, 
         pending_transfers: Map<u64, SettlementInfo>,
         transfer_counter: u64,
+        transfer_delay: u64,
     }
 
     #[event]
@@ -257,7 +258,9 @@ mod ZionDefiCard {
         self.daily_transaction_limit.write(initial_config.daily_transaction_limit);
         self.daily_spend_limit.write(initial_config.daily_spend_limit);
         self.last_daily_reset.write(ts);
+        self.transfer_delay.write(1800);
         self.emit(CardInitialized { owner, timestamp: ts });
+        
     }
 
     #[abi(embed_v0)]
@@ -741,9 +744,9 @@ mod ZionDefiCard {
             };
             
             self.settlements.entry(request_id).write(transfer_info);
-            self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement); [cite: 323]
+            self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement);
             
-            self.reentrancy.end(); [cite: 126]
+            self.reentrancy.end();
             request_id
         }
 
