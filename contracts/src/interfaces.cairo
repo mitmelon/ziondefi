@@ -48,7 +48,6 @@ pub trait IZionDefiCard<TContractState> {
     fn cancel_settlement(ref self: TContractState, request_id: u64, sig_r: felt252, sig_s: felt252);
 
     // ---- Funds Management --------------------------------------------------
-    fn deposit_funds(ref self: TContractState, token: ContractAddress, amount: u256);
     fn sync_balances(ref self: TContractState, tokens: Span<ContractAddress>, sig_r: felt252, sig_s: felt252);
 
     // ---- Swap & Auto-Swap Management (owner/relayer + PIN) -----------------
