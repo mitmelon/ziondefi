@@ -119,7 +119,7 @@ pub fn calculate_recurring_interval(last_ts: u64, now_ts: u64) -> u64 {
 // ============================================================================
 // SWAP LOGIC
 // ============================================================================
-
+#[inline(never)]
 pub fn do_swap(
     avnu_router: ContractAddress,
     sell_token: ContractAddress,

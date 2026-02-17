@@ -8,8 +8,7 @@ mod ZionDefiCard {
     use core::num::traits::Zero;
     use starknet::{
         ContractAddress, ClassHash,
-        get_caller_address, get_block_timestamp, get_contract_address,
-        SyscallResultTrait,
+        get_caller_address, get_block_timestamp, get_contract_address
     };
     use starknet::storage::{
         Map, StoragePointerReadAccess, StoragePointerWriteAccess,
@@ -1342,6 +1341,7 @@ mod ZionDefiCard {
             assert(get_caller_address() == self.admin.read(), 'Not admin');
         }
 
+        #[inline(never)]
         fn _assert_owner_or_relayer_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
             self._check_lockout();
             let caller = get_caller_address();
@@ -1352,6 +1352,7 @@ mod ZionDefiCard {
             self.failed_pin_attempts.write(0);
         }
 
+        #[inline(never)]
         fn _assert_owner_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
             self._check_lockout();
             let owner = self.owner.read();
@@ -1360,6 +1361,7 @@ mod ZionDefiCard {
             self.failed_pin_attempts.write(0);
         }
 
+        #[inline(never)]
         fn _check_lockout(self: @ContractState) {
             assert(get_block_timestamp() >= self.lockout_until.read(), 'Locked out');
         }
@@ -1368,6 +1370,7 @@ mod ZionDefiCard {
             assert(self.status.read() == CardStatus::Active, 'Card not active');
         }
 
+        #[inline(never)]
         fn _assert_not_frozen(self: @ContractState) {
             let status = self.status.read();
             assert(status != CardStatus::PendingActivation, 'Pay deployment fee first');
