@@ -223,6 +223,22 @@ pub struct CardInfo {
     pub total_currencies: u32,
 }
 
+/// Result returned by `verify_owner_login`.
+/// dApps use this to authenticate a card owner via PIN proof and
+/// receive the card state + balances in one call.
+#[derive(Drop, Serde)]
+pub struct LoginResult {
+    pub card_address: ContractAddress,
+    pub owner: ContractAddress,
+    pub status: CardStatus,
+    pub payment_mode: PaymentMode,
+    pub balances: Span<TokenBalance>,
+    pub deployment_fee_paid: bool,
+    pub deployment_fee_remaining_usd: u256,
+    pub created_at: u64,
+    pub verified_at: u64,
+}
+
 /// Initial configuration supplied at card creation.
 #[derive(Drop, Serde, starknet::Store)]
 pub struct CardConfig {
