@@ -6,7 +6,7 @@ use starknet::{ContractAddress, ClassHash};
 use super::types::{
     PaymentMode, CardConfig, CardInfo, CardStatus, RateLimitStatus,
     PaymentRequest, RequestStatus, TransactionSummary,
-    BalanceSummary, FraudAlert, SettlementInfo, LoginResult,
+    BalanceSummary, SettlementInfo, LoginResult,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
     PendingTransfer,
 };
@@ -82,7 +82,6 @@ pub trait IZionDefiCard<TContractState> {
 
     // ---- Views (no PIN required) -------------------------------------------
     fn get_accepted_currencies(self: @TContractState) -> Span<ContractAddress>;
-    fn get_factory_accepted_tokens(self: @TContractState) -> Span<ContractAddress>;
     fn get_payment_mode(self: @TContractState) -> PaymentMode;
     fn is_currency_accepted(self: @TContractState, token: ContractAddress) -> bool;
     fn get_pending_requests(self: @TContractState, offset: u64, limit: u8) -> Span<PaymentRequest>;
@@ -101,13 +100,11 @@ pub trait IZionDefiCard<TContractState> {
     fn get_deployment_fee_debt(self: @TContractState) -> u256;
     fn get_auto_swap_target(self: @TContractState, source_token: ContractAddress) -> ContractAddress;
     fn is_auto_swap_enabled(self: @TContractState, source_token: ContractAddress) -> bool;
-    fn get_all_auto_swap_rules(self: @TContractState) -> Span<(ContractAddress, ContractAddress)>;
     fn get_transactions(self: @TContractState, offset: u64, limit: u8) -> Span<PaymentRequest>;
 
     // ---- PIN-protected views -----------------------------------------------
     fn get_transaction_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252, start_ts: u64, end_ts: u64, offset: u64, limit: u8) -> TransactionSummary;
     fn get_balance_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary;
-    fn get_fraud_alerts(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> Span<FraudAlert>;
 
     // ---- dApp Owner Verification / Login -----------------------------------
     fn verify_owner_login(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> LoginResult;
