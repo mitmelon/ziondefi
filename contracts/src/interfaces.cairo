@@ -42,8 +42,8 @@ pub trait IZionDefiCard<TContractState> {
     fn revoke_payment_approval(ref self: TContractState, request_id: u64, sig_r: felt252, sig_s: felt252);
 
     // ---- Payment Execution & Settlement ------------------------------------
-    fn charge_card(ref self: TContractState, request_id: u64, idempotency_key: felt252, settlement_delay_seconds: u64, quote: Option<OffchainQuote>, slippage_tolerance_bps: u16, deadline: u64);
-    fn charge_recurring(ref self: TContractState, request_id: u64, idempotency_key: felt252, settlement_delay_seconds: u64, quote: Option<OffchainQuote>, slippage_tolerance_bps: u16, deadline: u64);
+    fn charge_card(ref self: TContractState, request_id: u64, idempotency_key: felt252, quote: Option<OffchainQuote>, slippage_tolerance_bps: u16, deadline: u64);
+    fn charge_recurring(ref self: TContractState, request_id: u64, idempotency_key: felt252, quote: Option<OffchainQuote>, slippage_tolerance_bps: u16, deadline: u64);
     fn process_settlement(ref self: TContractState, request_id: u64, idempotency_key: felt252);
     fn cancel_settlement(ref self: TContractState, request_id: u64, sig_r: felt252, sig_s: felt252);
 

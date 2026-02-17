@@ -104,8 +104,8 @@ mod ZionDefiCard {
         autoswap_enabled: Map<ContractAddress, bool>,
         autoswap_rule_count: u32,
         autoswap_sources: Map<u32, ContractAddress>,
-
-        transfer_delay: u64, 
+        transfer_delay: u64,
+        settlement_delay_seconds: u64,
         pending_transfers: Map<u64, SettlementInfo>,
         transfer_counter: u64,
     }
@@ -256,7 +256,9 @@ mod ZionDefiCard {
         self.daily_transaction_limit.write(initial_config.daily_transaction_limit);
         self.daily_spend_limit.write(initial_config.daily_spend_limit);
         self.last_daily_reset.write(ts);
-        self.transfer_delay.write(1800);
+        self.transfer_delay.write(initial_config.transfer_delay);
+        self.settlement_delay_seconds.write(initial_config.settlement_delay);
+
         self.emit(CardInitialized { owner, timestamp: ts });
         
     }
@@ -532,13 +534,13 @@ mod ZionDefiCard {
             ref self: ContractState,
             request_id: u64,
             idempotency_key: felt252,
-            settlement_delay_seconds: u64,
             quote: Option<OffchainQuote>,
             slippage_tolerance_bps: u16,
             deadline: u64,
         ) {
             let mut req = self.payment_requests.entry(request_id).read();
             assert(!req.is_recurring, 'Use charge_recurring');
+            let settlement_delay_seconds = self.settlement_delay_seconds.read();
             self._execute_charge(request_id, idempotency_key, settlement_delay_seconds, quote, slippage_tolerance_bps, deadline, false);
         }
 
@@ -546,7 +548,6 @@ mod ZionDefiCard {
             ref self: ContractState,
             request_id: u64,
             idempotency_key: felt252,
-            settlement_delay_seconds: u64,
             quote: Option<OffchainQuote>,
             slippage_tolerance_bps: u16,
             deadline: u64,
@@ -557,6 +558,7 @@ mod ZionDefiCard {
                 let interval = helpers::calculate_recurring_interval(req.last_charged_at, get_block_timestamp());
                 assert(get_block_timestamp() >= req.last_charged_at + interval, 'Too soon');
             }
+            let settlement_delay_seconds = self.settlement_delay_seconds.read();
             self._execute_charge(request_id, idempotency_key, settlement_delay_seconds, quote, slippage_tolerance_bps, deadline, true);
         }
 
