@@ -1435,6 +1435,7 @@ mod ZionDefiCard {
             panic(array!['No balance'])
         }
 
+        #[inline(never)]
         fn _execute_charge(
             ref self: ContractState,
             request_id: u64,
@@ -1687,6 +1688,7 @@ mod ZionDefiCard {
             if usd > 0 { assert(usd <= max, 'Max tx exceeded'); }
         }
 
+        #[inline(never)]
         fn _cancel_all_active_payments(ref self: ContractState) {
             let total = self.request_counter.read();
             let mut i: u64 = 1;
@@ -1741,6 +1743,7 @@ mod ZionDefiCard {
             self.payment_requests.entry(request_id).write(req);
         }
 
+        #[inline(never)]
         fn _get_requests_by_status(self: @ContractState, offset: u64, limit: u8, target: RequestStatus) -> Span<PaymentRequest> {
             let cap = if limit > 100 { 100_u8 } else { limit };
             let total = self.request_counter.read();
