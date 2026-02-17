@@ -188,10 +188,6 @@ mod ZionDefiFactory {
     // EXTERNAL IMPLEMENTATION
     // ====================================================================
 
-    0x015a9e4735d08c9675cf60c17117765345f2f33b94b372112a6e13766c0b164a
-
-    0x0559ebec5ff32670562feff2716b2193e59f0d223360ea29b595a0caaf14379d
-
     #[abi(embed_v0)]
     impl ZionDefiFactoryImpl of ziondefi::interfaces::IZionDefiFactory<ContractState> {
 

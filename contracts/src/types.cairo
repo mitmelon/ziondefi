@@ -32,6 +32,8 @@ pub const SECONDS_PER_DAY: u64 = 86_400;
 pub const DEFAULT_SETTLEMENT_DELAY: u64 = 1800;
 /// Anomaly multiplier — if a charge exceeds largest_charge * this factor, auto-freeze.
 pub const ANOMALY_MULTIPLIER: u256 = 3;
+/// Delay (in seconds) before a transfer to an external address can be executed (24 hours).
+pub const TRANSFER_DELAY: u64 = 86_400;
 
 // ============================================================================
 // ENUMS
@@ -221,6 +223,8 @@ pub struct CardInfo {
     pub slippage_tolerance_bps: u16,
     pub auto_approve_threshold_usd: u256,
     pub total_currencies: u32,
+    pub transfer_delay: u64,
+    pub settlement_delay: u64,
 }
 
 /// Result returned by `verify_owner_login`.
@@ -246,6 +250,10 @@ pub struct CardConfig {
     pub daily_transaction_limit: u16,
     pub daily_spend_limit: u256,
     pub slippage_tolerance_bps: u16,
+    /// Per-card transfer delay in seconds (0 = instant, default TRANSFER_DELAY).
+    pub transfer_delay: u64,
+    /// Per-card settlement delay in seconds (0 = instant, default DEFAULT_SETTLEMENT_DELAY).
+    pub settlement_delay: u64,
 }
 
 // ============================================================================
@@ -329,4 +337,19 @@ pub struct AvnuFee {
     pub avnu_fees_bps: u128,
     pub integrator_fees: u256,
     pub integrator_fees_bps: u128,
+}
+
+/// A pending outbound transfer that is subject to a time-lock delay.
+/// The owner can cancel it within the delay period to prevent fraud.
+#[derive(Copy, Drop, Serde, starknet::Store)]
+pub struct PendingTransfer {
+    pub transfer_id: u64,
+    pub token: ContractAddress,
+    pub amount: u256,
+    pub recipient: ContractAddress,
+    pub created_at: u64,
+    /// Timestamp after which the transfer can be executed.
+    pub execute_after: u64,
+    pub executed: bool,
+    pub cancelled: bool,
 }

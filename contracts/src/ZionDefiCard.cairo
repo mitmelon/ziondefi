@@ -25,7 +25,7 @@ mod ZionDefiCard {
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
         TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
-        LoginResult, OffchainQuote,
+        LoginResult, OffchainQuote, PendingTransfer,
         CHARGE_COOLDOWN, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
@@ -105,6 +105,10 @@ mod ZionDefiCard {
         autoswap_enabled: Map<ContractAddress, bool>,
         autoswap_rule_count: u32,
         autoswap_sources: Map<u32, ContractAddress>,
+        transfer_counter: u64,
+        pending_transfers: Map<u64, PendingTransfer>,
+        transfer_delay: u64,
+        settlement_delay: u64,
     }
 
     #[event]
@@ -144,6 +148,9 @@ mod ZionDefiCard {
         AutoSwapConfigured: AutoSwapConfigured,
         AutoSwapRemoved: AutoSwapRemoved,
         ManualSwapExecuted: ManualSwapExecuted,
+        TransferInitiated: TransferInitiated,
+        TransferExecuted: TransferExecuted,
+        TransferCancelled: TransferCancelled,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -208,6 +215,12 @@ mod ZionDefiCard {
     struct AutoSwapRemoved { #[key] source_token: ContractAddress, timestamp: u64 }
     #[derive(Drop, starknet::Event)]
     struct ManualSwapExecuted { token_in: ContractAddress, token_out: ContractAddress, amount_in: u256, amount_out: u256, timestamp: u64 }
+    #[derive(Drop, starknet::Event)]
+    struct TransferInitiated { #[key] transfer_id: u64, #[key] recipient: ContractAddress, token: ContractAddress, amount: u256, execute_after: u64, timestamp: u64 }
+    #[derive(Drop, starknet::Event)]
+    struct TransferExecuted { #[key] transfer_id: u64, #[key] recipient: ContractAddress, token: ContractAddress, amount: u256, timestamp: u64 }
+    #[derive(Drop, starknet::Event)]
+    struct TransferCancelled { #[key] transfer_id: u64, token: ContractAddress, amount: u256, timestamp: u64 }
 
     #[constructor]
     fn constructor(
@@ -252,6 +265,8 @@ mod ZionDefiCard {
         self.max_transaction_amount.write(initial_config.max_transaction_amount);
         self.daily_transaction_limit.write(initial_config.daily_transaction_limit);
         self.daily_spend_limit.write(initial_config.daily_spend_limit);
+        self.transfer_delay.write(initial_config.transfer_delay);
+        self.settlement_delay.write(initial_config.settlement_delay);
         self.last_daily_reset.write(ts);
         self.emit(CardInitialized { owner, timestamp: ts });
     }
@@ -340,6 +355,28 @@ mod ZionDefiCard {
         fn set_token_price_feed(ref self: ContractState, token: ContractAddress, pair_id: felt252, sig_r: felt252, sig_s: felt252) {
             self._assert_owner_or_relayer_pin(sig_r, sig_s);
             self.token_price_feed_ids.entry(token).write(pair_id);
+        }
+
+        fn set_transfer_delay(ref self: ContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252) {
+            self._assert_active();
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self.transfer_delay.write(delay_seconds);
+            self.emit(ConfigUpdated { key: 'transfer_delay', timestamp: get_block_timestamp() });
+        }
+
+        fn set_settlement_delay(ref self: ContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252) {
+            self._assert_active();
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self.settlement_delay.write(delay_seconds);
+            self.emit(ConfigUpdated { key: 'settlement_delay', timestamp: get_block_timestamp() });
+        }
+
+        fn get_transfer_delay(self: @ContractState) -> u64 {
+            self.transfer_delay.read()
+        }
+
+        fn get_settlement_delay(self: @ContractState) -> u64 {
+            self.settlement_delay.read()
         }
 
         // ================================================================
@@ -661,18 +698,98 @@ mod ZionDefiCard {
             self.reentrancy.end();
         }
 
-        fn withdraw_funds(ref self: ContractState, token: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252) {
+        fn transfer(ref self: ContractState, action: felt252, token: ContractAddress, amount: u256, recipient: ContractAddress, sig_r: felt252, sig_s: felt252) {
             self.reentrancy.start();
             self._assert_not_frozen();
-            self._assert_owner_pin(sig_r, sig_s);
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
             assert(amount > 0, 'Zero amount');
             let bal = self.token_balances.entry(token).read();
             assert(bal >= amount, 'Insufficient balance');
-            self.token_balances.entry(token).write(bal - amount);
-            let d = IERC20Dispatcher { contract_address: token };
-            assert(d.transfer(self.owner.read(), amount), 'Transfer failed');
-            self.emit(FundsWithdrawn { token, amount, timestamp: get_block_timestamp() });
+
+            let ts = get_block_timestamp();
+
+            if action == 'withdraw' {
+                // Immediate withdrawal to owner — no delay needed
+                self.token_balances.entry(token).write(bal - amount);
+                let d = IERC20Dispatcher { contract_address: token };
+                assert(d.transfer(self.owner.read(), amount), 'Transfer failed');
+                self.emit(FundsWithdrawn { token, amount, timestamp: ts });
+            } else if action == 'transfer' {
+                assert(!recipient.is_zero(), 'Invalid recipient');
+                assert(recipient != self.owner.read(), 'Use withdraw for self');
+
+                // Reserve funds immediately
+                self.token_balances.entry(token).write(bal - amount);
+
+                let transfer_id = self.transfer_counter.read() + 1;
+                self.transfer_counter.write(transfer_id);
+                let card_delay = self.transfer_delay.read();
+                let execute_after = ts + card_delay;
+
+                let pending = PendingTransfer {
+                    transfer_id,
+                    token,
+                    amount,
+                    recipient,
+                    created_at: ts,
+                    execute_after,
+                    executed: false,
+                    cancelled: false,
+                };
+                self.pending_transfers.entry(transfer_id).write(pending);
+                self.emit(TransferInitiated { transfer_id, recipient, token, amount, execute_after, timestamp: ts });
+            } else {
+                assert(false, 'Invalid action');
+            }
+
             self.reentrancy.end();
+        }
+
+        fn execute_transfer(ref self: ContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252) {
+            self.reentrancy.start();
+            self._assert_not_frozen();
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+
+            let mut pt = self.pending_transfers.entry(transfer_id).read();
+            assert(pt.transfer_id != 0, 'Transfer not found');
+            assert(!pt.executed, 'Already executed');
+            assert(!pt.cancelled, 'Already cancelled');
+
+            let ts = get_block_timestamp();
+            assert(ts >= pt.execute_after, 'Delay not elapsed');
+
+            pt.executed = true;
+            self.pending_transfers.entry(transfer_id).write(pt);
+
+            let d = IERC20Dispatcher { contract_address: pt.token };
+            assert(d.transfer(pt.recipient, pt.amount), 'Transfer failed');
+            self.emit(TransferExecuted { transfer_id, recipient: pt.recipient, token: pt.token, amount: pt.amount, timestamp: ts });
+            self.reentrancy.end();
+        }
+
+        fn cancel_transfer(ref self: ContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252) {
+            self._assert_not_frozen();
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+
+            let mut pt = self.pending_transfers.entry(transfer_id).read();
+            assert(pt.transfer_id != 0, 'Transfer not found');
+            assert(!pt.executed, 'Already executed');
+            assert(!pt.cancelled, 'Already cancelled');
+
+            pt.cancelled = true;
+            self.pending_transfers.entry(transfer_id).write(pt);
+
+            // Refund reserved funds back to card balance
+            let bal = self.token_balances.entry(pt.token).read();
+            self.token_balances.entry(pt.token).write(bal + pt.amount);
+
+            self.emit(TransferCancelled { transfer_id, token: pt.token, amount: pt.amount, timestamp: get_block_timestamp() });
+        }
+
+        fn get_pending_transfer(self: @ContractState, transfer_id: u64) -> PendingTransfer {
+            let pt = self.pending_transfers.entry(transfer_id).read();
+            assert(pt.transfer_id != 0, 'Transfer not found');
+            pt
         }
 
         fn sync_balances(
@@ -973,6 +1090,8 @@ mod ZionDefiCard {
                 slippage_tolerance_bps: self.slippage_tolerance_bps.read(),
                 auto_approve_threshold_usd: self.auto_approve_threshold_usd.read(),
                 total_currencies: self.currency_count.read(),
+                transfer_delay: self.transfer_delay.read(),
+                settlement_delay: self.settlement_delay.read(),
             }
         }
 
@@ -1522,10 +1641,13 @@ mod ZionDefiCard {
             let amount_for_merchant = req.amount - fee;
 
             let is_instant = factory.is_merchant_instant_settlement(req.merchant);
+            let card_settle_delay = self.settlement_delay.read();
             let effective_delay = if is_instant {
                 0_u64
             } else if settlement_delay_seconds > 0 {
                 settlement_delay_seconds
+            } else if card_settle_delay > 0 {
+                card_settle_delay
             } else {
                 factory.get_effective_settlement_delay(req.merchant)
             };

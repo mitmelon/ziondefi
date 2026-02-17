@@ -8,6 +8,7 @@ use super::types::{
     PaymentRequest, RequestStatus, TransactionSummary,
     BalanceSummary, FraudAlert, SettlementInfo, LoginResult,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
+    PendingTransfer,
 };
 
 // ============================================================================
@@ -26,6 +27,10 @@ pub trait IZionDefiCard<TContractState> {
     fn set_merchant_spend_limit(ref self: TContractState, merchant: ContractAddress, max_amount_usd: u256, sig_r: felt252, sig_s: felt252);
     fn remove_merchant_spend_limit(ref self: TContractState, merchant: ContractAddress, sig_r: felt252, sig_s: felt252);
     fn set_token_price_feed(ref self: TContractState, token: ContractAddress, pair_id: felt252, sig_r: felt252, sig_s: felt252);
+    fn set_transfer_delay(ref self: TContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252);
+    fn set_settlement_delay(ref self: TContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252);
+    fn get_transfer_delay(self: @TContractState) -> u64;
+    fn get_settlement_delay(self: @TContractState) -> u64;
 
     // ---- Owner Management (owner-only + PIN) -------------------------------
     fn change_owner(ref self: TContractState, new_owner: ContractAddress, sig_r: felt252, sig_s: felt252);
@@ -49,7 +54,10 @@ pub trait IZionDefiCard<TContractState> {
 
     // ---- Funds Management --------------------------------------------------
     fn deposit_funds(ref self: TContractState, token: ContractAddress, amount: u256);
-    fn withdraw_funds(ref self: TContractState, token: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252);
+    fn transfer(ref self: TContractState, action: felt252, token: ContractAddress, amount: u256, recipient: ContractAddress, sig_r: felt252, sig_s: felt252);
+    fn execute_transfer(ref self: TContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252);
+    fn cancel_transfer(ref self: TContractState, transfer_id: u64, sig_r: felt252, sig_s: felt252);
+    fn get_pending_transfer(self: @TContractState, transfer_id: u64) -> PendingTransfer;
     fn sync_balances(ref self: TContractState, tokens: Span<ContractAddress>, sig_r: felt252, sig_s: felt252);
 
     // ---- Swap & Auto-Swap Management (owner/relayer + PIN) -----------------

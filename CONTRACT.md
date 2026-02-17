@@ -59,6 +59,17 @@ Success: Deployment completed
 Transaction Hash: 0x064c041d10ec1bf6a08b1d0ef8120bebbfda9ac5e4b576f61ffdcf6122125c36
 
 
+
+//SEPOLIA
+
 node deploy.js set-vault-hash 0x73425b9fca8013433bb7b2e8825ec7093cbdc7f58c0298adcc9fbe446bb2167
 
 
+# ETH
+node deploy.js add-token 0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7 19514442401534788 --testnet
+
+# STRK
+node deploy.js add-token 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d 6004514686061859652 --testnet
+
+# USDC
+node deploy.js add-token 0x053b40a647cedfca6ca84f542a0fe36736031905a9639a7f19a3c1e66bfd5080 6148332971638477636 --testnet
