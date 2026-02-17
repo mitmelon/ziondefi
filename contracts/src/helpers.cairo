@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // ZionDefi Protocol v2.0 — Pure Utility Helpers
 // Standalone functions that do not depend on contract state.
-
-use starknet::ContractAddress;
+use starknet::{ContractAddress, get_contract_address, SyscallResultTrait};
+use openzeppelin_token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+use core::num::traits::Zero;
 
 // ============================================================================
 // ARRAY HELPERS
@@ -114,4 +115,56 @@ pub fn calculate_recurring_interval(last_ts: u64, now_ts: u64) -> u64 {
         }
         y += 1;
     }
+}
+// ============================================================================
+// SWAP LOGIC
+// ============================================================================
+
+pub fn do_swap(
+    avnu_router: ContractAddress,
+    sell_token: ContractAddress,
+    buy_token: ContractAddress,
+    sell_amount: u256,
+    expected_buy: u256,
+    min_buy: u256,
+    integrator_fees_bps: u128,
+    routes: Span<felt252>,
+) -> u256 {
+    let card = get_contract_address();
+    let sell_d = IERC20Dispatcher { contract_address: sell_token };
+    
+    sell_d.approve(avnu_router, 0);
+    assert(sell_d.approve(avnu_router, sell_amount), 'Approve failed');
+
+    let buy_d = IERC20Dispatcher { contract_address: buy_token };
+    let pre = buy_d.balance_of(card);
+
+    let mut calldata: Array<felt252> = array![];
+    Serde::serialize(@sell_token, ref calldata);
+    Serde::serialize(@sell_amount, ref calldata);
+    Serde::serialize(@buy_token, ref calldata);
+    Serde::serialize(@expected_buy, ref calldata);
+    Serde::serialize(@min_buy, ref calldata);
+    Serde::serialize(@card, ref calldata);
+    Serde::serialize(@integrator_fees_bps, ref calldata);
+    let zero_addr: ContractAddress = Zero::zero();
+    Serde::serialize(@zero_addr, ref calldata);
+    
+    let mut i: u32 = 0;
+    while i < routes.len() {
+        calldata.append(*routes[i]);
+        i += 1;
+    };
+
+    let mut ret = starknet::syscalls::call_contract_syscall(
+        avnu_router, selector!("multi_route_swap"), calldata.span(),
+    ).unwrap_syscall();
+    
+    let success: bool = Serde::deserialize(ref ret).unwrap();
+    assert(success, 'Swap failed');
+
+    let post = buy_d.balance_of(card);
+    let credited = post - pre;
+    assert(credited > 0, 'Swap returned nothing');
+    credited
 }

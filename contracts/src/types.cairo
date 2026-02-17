@@ -332,10 +332,3 @@ pub struct AvnuFee {
     pub integrator_fees: u256,
     pub integrator_fees_bps: u128,
 }
-
-#[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
-pub enum TransferStatus {
-    Pending,
-    Executed,
-    Cancelled,
-}

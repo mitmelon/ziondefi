@@ -1311,13 +1311,6 @@ mod ZionDefiCard {
     #[generate_trait]
     impl InternalImpl of InternalTrait {
 
-        /// Execute a swap on the AVNU Exchange via low-level `call_contract_syscall`.
-        ///
-        /// `routes` is the pre-serialized AVNU v2 route data (including the
-        /// `Array<Route>` length prefix) that the relayer obtained from the
-        /// AVNU API.  It is spliced into the `multi_route_swap` calldata
-        /// verbatim so the on-chain ABI encoding matches AVNU's expectations
-        /// exactly — no local Route / RouteSwap types required.
         fn _do_swap(
             ref self: ContractState,
             avnu_router: ContractAddress,
@@ -1329,43 +1322,16 @@ mod ZionDefiCard {
             integrator_fees_bps: u128,
             routes: Span<felt252>,
         ) -> u256 {
-            let card = get_contract_address();
-            let sell_d = IERC20Dispatcher { contract_address: sell_token };
-            // Reset allowance first (safety for tokens that require it)
-            sell_d.approve(avnu_router, 0);
-            assert(sell_d.approve(avnu_router, sell_amount), 'Approve failed');
-
-            let buy_d = IERC20Dispatcher { contract_address: buy_token };
-            let pre = buy_d.balance_of(card);
-
-            // Build multi_route_swap calldata
-            let mut calldata: Array<felt252> = array![];
-            Serde::serialize(@sell_token, ref calldata);
-            Serde::serialize(@sell_amount, ref calldata);
-            Serde::serialize(@buy_token, ref calldata);
-            Serde::serialize(@expected_buy, ref calldata);
-            Serde::serialize(@min_buy, ref calldata);
-            Serde::serialize(@card, ref calldata);
-            Serde::serialize(@integrator_fees_bps, ref calldata);
-            let zero_addr: ContractAddress = Zero::zero();
-            Serde::serialize(@zero_addr, ref calldata);
-            // Splice in pre-serialized AVNU route data from relayer
-            let mut i: u32 = 0;
-            while i < routes.len() {
-                calldata.append(*routes[i]);
-                i += 1;
-            };
-
-            let mut ret = starknet::syscalls::call_contract_syscall(
-                avnu_router, selector!("multi_route_swap"), calldata.span(),
-            ).unwrap_syscall();
-            let success: bool = Serde::deserialize(ref ret).unwrap();
-            assert(success, 'Swap failed');
-
-            let post = buy_d.balance_of(card);
-            let credited = post - pre;
-            assert(credited > 0, 'Swap returned nothing');
-            credited
+           ziondefi::helpers::do_swap(
+                avnu_router,
+                sell_token,
+                buy_token,
+                sell_amount,
+                expected_buy,
+                min_buy,
+                integrator_fees_bps,
+                routes
+            )
         }
 
         fn _assert_owner(self: @ContractState) {
