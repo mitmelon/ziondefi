@@ -248,6 +248,8 @@ pub struct CardConfig {
     pub daily_transaction_limit: u16,
     pub daily_spend_limit: u256,
     pub slippage_tolerance_bps: u16,
+    pub transfer_delay: u64,
+    pub settlement_delay: u64,
 }
 
 // ============================================================================
