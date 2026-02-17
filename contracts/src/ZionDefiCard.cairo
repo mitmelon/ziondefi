@@ -29,7 +29,7 @@ mod ZionDefiCard {
         CHARGE_COOLDOWN, MAX_FAILED_ATTEMPTS, LOCKOUT_DURATION,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
-        ANOMALY_MULTIPLIER,
+        ANOMALY_MULTIPLIER, TRANSFER_DELAY,
     };
     use ziondefi::interfaces::{
         IZionDefiFactoryDispatcher, IZionDefiFactoryDispatcherTrait,
@@ -107,8 +107,6 @@ mod ZionDefiCard {
         autoswap_sources: Map<u32, ContractAddress>,
         transfer_counter: u64,
         pending_transfers: Map<u64, PendingTransfer>,
-        transfer_delay: u64,
-        settlement_delay: u64,
     }
 
     #[event]
@@ -265,8 +263,6 @@ mod ZionDefiCard {
         self.max_transaction_amount.write(initial_config.max_transaction_amount);
         self.daily_transaction_limit.write(initial_config.daily_transaction_limit);
         self.daily_spend_limit.write(initial_config.daily_spend_limit);
-        self.transfer_delay.write(initial_config.transfer_delay);
-        self.settlement_delay.write(initial_config.settlement_delay);
         self.last_daily_reset.write(ts);
         self.emit(CardInitialized { owner, timestamp: ts });
     }
@@ -355,28 +351,6 @@ mod ZionDefiCard {
         fn set_token_price_feed(ref self: ContractState, token: ContractAddress, pair_id: felt252, sig_r: felt252, sig_s: felt252) {
             self._assert_owner_or_relayer_pin(sig_r, sig_s);
             self.token_price_feed_ids.entry(token).write(pair_id);
-        }
-
-        fn set_transfer_delay(ref self: ContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252) {
-            self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
-            self.transfer_delay.write(delay_seconds);
-            self.emit(ConfigUpdated { key: 'transfer_delay', timestamp: get_block_timestamp() });
-        }
-
-        fn set_settlement_delay(ref self: ContractState, delay_seconds: u64, sig_r: felt252, sig_s: felt252) {
-            self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
-            self.settlement_delay.write(delay_seconds);
-            self.emit(ConfigUpdated { key: 'settlement_delay', timestamp: get_block_timestamp() });
-        }
-
-        fn get_transfer_delay(self: @ContractState) -> u64 {
-            self.transfer_delay.read()
-        }
-
-        fn get_settlement_delay(self: @ContractState) -> u64 {
-            self.settlement_delay.read()
         }
 
         // ================================================================
@@ -723,8 +697,7 @@ mod ZionDefiCard {
 
                 let transfer_id = self.transfer_counter.read() + 1;
                 self.transfer_counter.write(transfer_id);
-                let card_delay = self.transfer_delay.read();
-                let execute_after = ts + card_delay;
+                let execute_after = ts + TRANSFER_DELAY;
 
                 let pending = PendingTransfer {
                     transfer_id,
@@ -1090,11 +1063,10 @@ mod ZionDefiCard {
                 slippage_tolerance_bps: self.slippage_tolerance_bps.read(),
                 auto_approve_threshold_usd: self.auto_approve_threshold_usd.read(),
                 total_currencies: self.currency_count.read(),
-                transfer_delay: self.transfer_delay.read(),
-                settlement_delay: self.settlement_delay.read(),
-                card_status: self.status.read(),
             }
         }
+
+        fn get_card_status(self: @ContractState) -> CardStatus { self.status.read() }
 
         fn get_rate_limit_status(self: @ContractState) -> RateLimitStatus {
             let now = get_block_timestamp();
@@ -1178,6 +1150,36 @@ mod ZionDefiCard {
             out.span()
         }
 
+        fn get_transaction_summary(
+            ref self: ContractState, sig_r: felt252, sig_s: felt252,
+            start_ts: u64, end_ts: u64, offset: u64, limit: u8,
+        ) -> TransactionSummary {
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            let cap = if limit > 100 { 100_u8 } else { limit };
+            let total = self.transaction_counter.read();
+            let mut spent: u256 = 0; let mut cb: u256 = 0; let mut fees: u256 = 0;
+            let mut count: u64 = 0; let mut collected: u8 = 0;
+            let mut i = offset + 1;
+            loop {
+                if i > total || collected >= cap { break; }
+                let tx = self.transactions.entry(i).read();
+                if tx.timestamp >= start_ts && tx.timestamp <= end_ts {
+                    spent = spent + tx.amount;
+                    cb = cb + tx.cashback_amount;
+                    fees = fees + tx.transaction_fee;
+                    count += 1;
+                    collected += 1;
+                }
+                i += 1;
+            };
+            TransactionSummary {
+                total_spent: spent, total_received: 0, total_cashback_earned: cb,
+                total_swap_fees_paid: 0, total_tx_fees_charged: fees,
+                transaction_count: count, unique_merchants: 0,
+                transactions: ArrayTrait::new().span(),
+            }
+        }
+
         fn get_balance_summary(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary {
             self._assert_owner_or_relayer_pin(sig_r, sig_s);
             let mut out = ArrayTrait::new();
@@ -1193,6 +1195,26 @@ mod ZionDefiCard {
             BalanceSummary { balances: out.span(), total_value_usd: 0 }
         }
 
+        fn get_fraud_alerts(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> Span<FraudAlert> {
+            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            let mut out = ArrayTrait::new();
+            let total = self.fraud_alert_count.read();
+            let mut i: u64 = 1;
+            loop {
+                if i > total { break; }
+                out.append(self.fraud_alerts.entry(i).read());
+                i += 1;
+            };
+            out.span()
+        }
+
+        // ================================================================
+        // I. DAPP OWNER VERIFICATION / LOGIN
+        // ================================================================
+        /// Verify card ownership via PIN proof.
+        /// Any caller (dApp) can invoke this.  The owner signs a challenge
+        /// with their PIN private key; if valid the contract returns the
+        /// card address, owner, status and all token balances.
         fn verify_owner_login(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> LoginResult {
             let owner = self.owner.read();
             // Verify PIN — will revert & auto-freeze on 3rd consecutive failure
@@ -1291,6 +1313,10 @@ mod ZionDefiCard {
             credited
         }
 
+        /// Shared deployment-fee collection logic used by both `deposit_funds`
+        /// and `sync_balances`.  Deducts as much of the remaining deployment
+        /// fee as possible from `available` tokens.  Returns the amount of
+        /// tokens left over after any fee deduction.
         fn _collect_deployment_fee(
             ref self: ContractState,
             token: ContractAddress,
@@ -1362,6 +1388,10 @@ mod ZionDefiCard {
             self._verify_pin_or_freeze(owner, sig_r, sig_s);
         }
 
+        /// Core PIN verification with failure counter & auto-freeze.
+        /// On success: resets `failed_pin_attempts` to 0.
+        /// On failure: increments counter; if it reaches MAX_FAILED_ATTEMPTS
+        /// the card is frozen and a lockout timer is set.
         fn _verify_pin_or_freeze(ref self: ContractState, owner: ContractAddress, sig_r: felt252, sig_s: felt252) {
             let valid = self.pin._try_verify_pin(owner, sig_r, sig_s);
             if valid {
@@ -1566,13 +1596,10 @@ mod ZionDefiCard {
             let amount_for_merchant = req.amount - fee;
 
             let is_instant = factory.is_merchant_instant_settlement(req.merchant);
-            let card_settle_delay = self.settlement_delay.read();
             let effective_delay = if is_instant {
                 0_u64
             } else if settlement_delay_seconds > 0 {
                 settlement_delay_seconds
-            } else if card_settle_delay > 0 {
-                card_settle_delay
             } else {
                 factory.get_effective_settlement_delay(req.merchant)
             };
@@ -1784,6 +1811,11 @@ mod ZionDefiCard {
     impl UpgradeableImpl of IUpgradeable<ContractState> {
         fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
             assert(get_caller_address() == self.admin.read(), 'Admin only');
+            self.upgradeable.upgrade(new_class_hash);
+        }
+    }
+}
+er_address() == self.admin.read(), 'Admin only');
             self.upgradeable.upgrade(new_class_hash);
         }
     }
