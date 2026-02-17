@@ -109,7 +109,6 @@ mod ZionDefiCard {
         transfer_delay: u64, 
         pending_transfers: Map<u64, SettlementInfo>,
         transfer_counter: u64,
-        transfer_delay: u64,
     }
 
     #[event]
