@@ -115,7 +115,7 @@ pub trait IZionDefiCard<TContractState> {
 #[starknet::interface]
 pub trait IZionDefiFactory<TContractState> {
     // ---- Card Deployment ---------------------------------------------------
-    fn create_card(ref self: TContractState, pin_public_key: felt252, accepted_currencies: Span<ContractAddress>, payment_mode: PaymentMode, initial_config: CardConfig) -> ContractAddress;
+    fn create_card(ref self: TContractState, owner: ContractAddress, authorized_relayer: ContractAddress, pin_public_key: felt252, accepted_currencies: Span<ContractAddress>, payment_mode: PaymentMode, initial_config: CardConfig) -> ContractAddress;
 
     // ---- Protocol Configuration (owner-only) -------------------------------
     fn set_deployment_fee(ref self: TContractState, new_fee: u256);

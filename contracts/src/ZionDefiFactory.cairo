@@ -210,8 +210,8 @@ mod ZionDefiFactory {
             let caller = get_caller_address();
             let ts = get_block_timestamp();
 
-            assert(owner != 0, 'Invalid owner');
-            assert(authorized_relayer != 0, 'Invalid relayer');
+            assert(!owner.is_zero(), 'Invalid owner');
+            assert(!authorized_relayer.is_zero(), 'Invalid relayer');
             assert(pin_public_key != 0, 'Invalid PIN key');
             assert(accepted_currencies.len() > 0, 'No currencies');
             assert(initial_config.slippage_tolerance_bps <= 1000, 'Slippage too high');
