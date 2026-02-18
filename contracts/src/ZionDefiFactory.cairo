@@ -196,16 +196,22 @@ mod ZionDefiFactory {
         // ================================================================
 
         fn create_card(
-            ref self: ContractState,
-            pin_public_key: felt252,
-            accepted_currencies: Span<ContractAddress>,
-            payment_mode: PaymentMode,
-            initial_config: CardConfig,
+             ref self: ContractState,
+             owner: ContractAddress,
+             authorized_relayer: ContractAddress,
+             pin_public_key: felt252,
+             accepted_currencies: Span<ContractAddress>,
+             payment_mode: PaymentMode,
+             initial_config: CardConfig,
         ) -> ContractAddress {
             self.pausable.assert_not_paused();
+            self.ownable.assert_only_owner();
+            
             let caller = get_caller_address();
             let ts = get_block_timestamp();
 
+            assert(owner != 0, 'Invalid owner');
+            assert(authorized_relayer != 0, 'Invalid relayer');
             assert(pin_public_key != 0, 'Invalid PIN key');
             assert(accepted_currencies.len() > 0, 'No currencies');
             assert(initial_config.slippage_tolerance_bps <= 1000, 'Slippage too high');
@@ -219,17 +225,15 @@ mod ZionDefiFactory {
                 i += 1;
             };
 
-            // Deployment fee is NOT collected upfront — it becomes a debt on the card.
-            // The card starts in PendingActivation status and auto-deducts the fee
-            // from the owner's first deposit in any supported token.
             let deployment_fee_usd = self.deployment_fee.read();
 
             // Build constructor calldata
             let mut calldata = ArrayTrait::new();
-            calldata.append(caller.into());                          // owner
-            calldata.append(self.ownable.owner().into());            // admin
-            calldata.append(self.authorized_relayer.read().into());  // relayer
-            calldata.append(pin_public_key);                         // pin_public_key
+            calldata.append(owner.into()); // owner
+            calldata.append(self.ownable.owner().into()); // admin
+            calldata.append(authorized_relayer.into());  // relayer
+            calldata.append(pin_public_key); // pin_public_key
+
             Serde::serialize(@accepted_currencies.len(), ref calldata);
             let mut j: u32 = 0;
             loop {
@@ -249,7 +253,7 @@ mod ZionDefiFactory {
             let count = self.total_cards_deployed.read();
             self.total_cards_deployed.write(count + 1);
 
-            self.emit(CardCreated { card_address, owner: caller, timestamp: ts });
+            self.emit(CardCreated { card_address, owner, timestamp: ts });
             card_address
         }
 

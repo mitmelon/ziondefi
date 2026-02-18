@@ -54,16 +54,16 @@ pub enum CardStatus {
 /// - `MerchantTokenOnly` — user must hold the exact token the merchant requests.
 /// - `AnyAcceptedToken`  — card may swap from any held token to the merchant token.
 #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
-#[allow(starknet::store_no_default_variant)]
 pub enum PaymentMode {
+    None,
     MerchantTokenOnly,
     AnyAcceptedToken,
 }
 
 /// Status of a payment request through its lifecycle.
 #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
-#[allow(starknet::store_no_default_variant)]
 pub enum RequestStatus {
+    None,
     /// Request has been submitted and awaits approval.
     Pending,
     /// Owner / relayer has approved the request.
