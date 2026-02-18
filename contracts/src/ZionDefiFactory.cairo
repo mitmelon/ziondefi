@@ -207,7 +207,6 @@ mod ZionDefiFactory {
             self.pausable.assert_not_paused();
             self.ownable.assert_only_owner();
             
-            let caller = get_caller_address();
             let ts = get_block_timestamp();
 
             assert(!owner.is_zero(), 'Invalid owner');

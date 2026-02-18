@@ -41,9 +41,9 @@ pub const DEFAULT_TRANSFER_DELAY: u64 = 1800; // 30 minutes [cite: 447]
 
 /// Lifecycle status of a card.
 #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
-#[allow(starknet::store_no_default_variant)]
 pub enum CardStatus {
     /// Card deployed but deployment fee not yet paid. No operations allowed except deposit.
+    None,
     PendingActivation,
     Active,
     Frozen,
