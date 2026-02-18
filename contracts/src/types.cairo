@@ -42,7 +42,7 @@ pub const DEFAULT_TRANSFER_DELAY: u64 = 1800; // 30 minutes [cite: 447]
 /// Lifecycle status of a card.
 #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
 pub enum CardStatus {
-    /// Card deployed but deployment fee not yet paid. No operations allowed except deposit.
+   #[default]
     None,
     PendingActivation,
     Active,
@@ -55,6 +55,7 @@ pub enum CardStatus {
 /// - `AnyAcceptedToken`  — card may swap from any held token to the merchant token.
 #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
 pub enum PaymentMode {
+    #[default]
     None,
     MerchantTokenOnly,
     AnyAcceptedToken,
@@ -63,6 +64,7 @@ pub enum PaymentMode {
 /// Status of a payment request through its lifecycle.
 #[derive(Copy, Drop, Serde, starknet::Store, PartialEq)]
 pub enum RequestStatus {
+    #[default]
     None,
     /// Request has been submitted and awaits approval.
     Pending,
