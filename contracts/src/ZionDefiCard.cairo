@@ -370,13 +370,6 @@ mod ZionDefiCard {
             self.emit(RelayerChanged { old_relayer: old, new_relayer, timestamp: get_block_timestamp() });
         }
 
-        fn remove_relayer(ref self: ContractState) {
-            self._assert_admin();
-            let old = self.authorized_relayer.read();
-            self.authorized_relayer.write(Zero::zero());
-            self.emit(RelayerChanged { old_relayer: old, new_relayer: Zero::zero(), timestamp: get_block_timestamp() });
-        }
-
         // ================================================================
         // C. PAYMENT REQUESTS
         // ================================================================

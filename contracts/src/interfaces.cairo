@@ -32,7 +32,6 @@ pub trait IZionDefiCard<TContractState> {
 
     // ---- Relayer Management (admin-only, no PIN) ---------------------------
     fn change_relayer(ref self: TContractState, new_relayer: ContractAddress);
-    fn remove_relayer(ref self: TContractState);
 
     // ---- Payment Requests --------------------------------------------------
     fn submit_payment_request(ref self: TContractState, merchant: ContractAddress, amount: u256, token: ContractAddress, is_recurring: bool, description: ByteArray, metadata: ByteArray) -> u64;
