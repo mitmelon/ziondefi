@@ -1026,72 +1026,6 @@ mod ZionDefiCard {
         }
 
         fn get_card_info(self: @ContractState) -> CardInfo {
-            let total_interactions = self.request_counter.read();
-            
-            // Payment Request Metrics
-            let mut total_requests_submitted: u64 = 0;
-            let mut pending_reqs: u64 = 0;
-            let mut approved_reqs: u64 = 0;
-            let mut rejected_reqs: u64 = 0;
-            let mut cancelled_reqs: u64 = 0;
-            let mut settled_reqs: u64 = 0;
-
-            // Recurring Metrics
-            let mut active_recurring: u64 = 0;
-            let mut inactive_recurring: u64 = 0;
-
-            // Transfer Metrics
-            let mut total_transfers_made: u64 = 0;
-            let mut pending_transfers: u64 = 0;
-            let mut cancelled_transfers: u64 = 0;
-
-            let mut i: u64 = 1;
-            loop {
-                if i > total_interactions { break; }
-                
-                let req = self.payment_requests.entry(i).read();
-                let stl = self.settlements.entry(i).read();
-                let status = self.request_status.entry(i).read();
-                
-                if req.request_id != 0 {
-                    // === IT IS A PAYMENT REQUEST ===
-                    total_requests_submitted += 1;
-                    
-                    if status == RequestStatus::Pending { 
-                        pending_reqs += 1; 
-                    } else if status == RequestStatus::Approved { 
-                        approved_reqs += 1; 
-                    } else if status == RequestStatus::Rejected { 
-                        rejected_reqs += 1; 
-                    } else if status == RequestStatus::Cancelled || status == RequestStatus::Revoked { 
-                        cancelled_reqs += 1; 
-                    } else if status == RequestStatus::Settled { 
-                        settled_reqs += 1; 
-                    }
-
-                    // Tally Recurring States
-                    if req.is_recurring {
-                        if status == RequestStatus::Approved || status == RequestStatus::AwaitingSettlement {
-                            active_recurring += 1;
-                        } else if status == RequestStatus::Cancelled || status == RequestStatus::Revoked || status == RequestStatus::Rejected {
-                            inactive_recurring += 1;
-                        }
-                    }
-                } else if stl.request_id != 0 {
-                    // === IT IS A DIRECT TRANSFER ===
-                    total_transfers_made += 1;
-                    
-                    if stl.cancelled {
-                        cancelled_transfers += 1;
-                    } else if !stl.settled {
-                        pending_transfers += 1;
-                    }
-                }
-
-                i += 1;
-            };
-
-            // Return the massive data payload
             CardInfo {
                 card_address: get_contract_address(),
                 owner: self.owner.read(),
@@ -1104,23 +1038,10 @@ mod ZionDefiCard {
                 auto_approve_threshold_usd: self.auto_approve_threshold_usd.read(),
                 total_currencies: self.currency_count.read(),
                 
-                // Analytics Payload
                 total_merchants: self.merchant_count.read(),
                 total_transactions: self.transaction_counter.read(),
-                
-                total_requests_submitted,
-                total_approved_requests: approved_reqs,
-                total_pending_requests: pending_reqs,
-                total_rejected_requests: rejected_reqs,
-                total_cancelled_requests: cancelled_reqs,
-                total_settled_requests: settled_reqs,
-                
-                total_active_recurring_payments: active_recurring,
-                total_inactive_recurring_payments: inactive_recurring,
-                
-                total_transfers_made,
-                total_pending_transfers: pending_transfers,
-                total_cancelled_transfers: cancelled_transfers,
+                total_requests: self.request_counter.read(),
+                total_transfers: self.transfer_counter.read(),
             }
         }
 
