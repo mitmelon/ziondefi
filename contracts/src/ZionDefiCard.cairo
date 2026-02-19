@@ -86,6 +86,7 @@ mod ZionDefiCard {
         merchant_blacklist: Map<ContractAddress, bool>,
         merchant_blacklist_reason: Map<ContractAddress, ByteArray>,
         merchant_interactions: Map<ContractAddress, bool>,
+        merchant_count: u64,
         merchant_request_count: Map<ContractAddress, u8>,
         merchant_last_request_reset: Map<ContractAddress, u64>,
         approval_count: u8,
