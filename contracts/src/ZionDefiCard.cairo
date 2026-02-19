@@ -885,7 +885,6 @@ mod ZionDefiCard {
             self._assert_owner_pin(sig_r, sig_s);
             self.merchant_blacklist.entry(merchant).write(true);
             self.merchant_blacklist_reason.entry(merchant).write(reason.clone());
-            self._cancel_merchant_payments(merchant);
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             factory.increment_merchant_blacklist_count(merchant);
             self.emit(MerchantBlacklisted { merchant, reason, timestamp: get_block_timestamp() });
@@ -903,7 +902,6 @@ mod ZionDefiCard {
             assert(status != CardStatus::Frozen, 'Already frozen');
             assert(status != CardStatus::Burned, 'Card burned');
             self.status.write(CardStatus::Frozen);
-            self._cancel_all_active_payments();
             self.emit(CardFrozen { timestamp: get_block_timestamp() });
         }
 
@@ -926,7 +924,6 @@ mod ZionDefiCard {
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
 
-            self._cancel_all_active_payments();
 
             let burn_fee_usd = config.burn_fee;
             let mut fee_paid = false;
@@ -1574,7 +1571,6 @@ mod ZionDefiCard {
             if amount_usd > 0 {
                 if largest > 0 && amount_usd > largest * ANOMALY_MULTIPLIER {
                     self.status.write(CardStatus::Frozen);
-                    self._cancel_all_active_payments();
                     self.emit(AnomalyDetected { request_id, amount_usd, threshold: largest * ANOMALY_MULTIPLIER, timestamp: ts });
                     self.emit(CardFrozen { timestamp: ts });
                 }
@@ -1633,61 +1629,6 @@ mod ZionDefiCard {
             let manual_id = self.token_price_feed_ids.entry(token).read();
             let usd = Price_Oracle::convert_token_to_usd_auto(token, amount, manual_id);
             if usd > 0 { assert(usd <= max, 'Max tx exceeded'); }
-        }
-
-        #[inline(never)]
-        fn _cancel_all_active_payments(ref self: ContractState) {
-            let total = self.request_counter.read();
-            let mut i: u64 = 1;
-            loop {
-                if i > total { break; }
-                let status = self.request_status.entry(i).read();
-                if status == RequestStatus::Pending || status == RequestStatus::Approved {
-                    self.request_status.entry(i).write(RequestStatus::Cancelled);
-                    let mut req = self.payment_requests.entry(i).read();
-                    req.status = RequestStatus::Cancelled;
-                    self.payment_requests.entry(i).write(req);
-                } else if status == RequestStatus::AwaitingSettlement {
-                    self._refund_settlement(i);
-                }
-                i += 1;
-            };
-        }
-
-        fn _cancel_merchant_payments(ref self: ContractState, merchant: ContractAddress) {
-            let total = self.request_counter.read();
-            let mut i: u64 = 1;
-            loop {
-                if i > total { break; }
-                let req = self.payment_requests.entry(i).read();
-                if req.merchant == merchant {
-                    let status = self.request_status.entry(i).read();
-                    if status == RequestStatus::Pending || status == RequestStatus::Approved {
-                        self.request_status.entry(i).write(RequestStatus::Cancelled);
-                        let mut r = req;
-                        r.status = RequestStatus::Cancelled;
-                        self.payment_requests.entry(i).write(r);
-                    } else if status == RequestStatus::AwaitingSettlement {
-                        self._refund_settlement(i);
-                    }
-                }
-                i += 1;
-            };
-        }
-
-        fn _refund_settlement(ref self: ContractState, request_id: u64) {
-            let mut info = self.settlements.entry(request_id).read();
-            if info.request_id != 0 && !info.settled && !info.cancelled {
-                let refund = info.amount_for_merchant + info.admin_fee;
-                let bal = self.token_balances.entry(info.token).read();
-                self.token_balances.entry(info.token).write(bal + refund);
-                info.cancelled = true;
-                self.settlements.entry(request_id).write(info);
-            }
-            self.request_status.entry(request_id).write(RequestStatus::Cancelled);
-            let mut req = self.payment_requests.entry(request_id).read();
-            req.status = RequestStatus::Cancelled;
-            self.payment_requests.entry(request_id).write(req);
         }
 
         #[inline(never)]
