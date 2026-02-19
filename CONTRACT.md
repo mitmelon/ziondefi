@@ -25,7 +25,7 @@ DECLARE CONTRACT
 
 Manual Gas 
 sncast --account=sepolia declare \
-  --contract-name ZionDefiFactory \
+  --contract-name ZionDefiCard \
   --network=sepolia \
   --l2-gas 5200000000 \
   --l2-gas-price 8000000000 \
@@ -34,8 +34,7 @@ sncast --account=sepolia declare \
   --l1-data-gas 500 \
   --l1-data-gas-price 3000000000000
 
-# Class Hash:       0x63d2eca02aa243ae77c8caded5b538f462f6e618a0b79b50984f9e64e353cb3
-
+# Class Hash:        0x44a81b154c0195938b3395903f94b5867862db9f0416b7ef15b7ee8769e99dc
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -43,7 +42,7 @@ sncast --account=sepolia declare \
 
 sncast --account=sepolia declare --contract-name=ZionDefiFactory --network=sepolia
 
-# Class Hash:        0x27c155c40a383b90ebd63eb1a36b10180c2c86bb4b4a48e71b3ed107b435c67
+# Class Hash:         0x5b59880360a0c4e151f6a3ada459589ae82592d125e22ff6e4f9c0a77749c20
 
 
 sncast --account sepolia deploy --class-hash 0x751544f8253ab284ed2f275e9150b26fe642a16f840231531b733c455c94a25 --arguments '<owner: 0x0559ebec5ff32670562feff2716b2193e59f0d223360ea29b595a0caaf14379d>, <vault_class_hash: 0x152722351337a83fefc793c3a359cd2effc89678339226445f7d13967179613>, <admin_wallet: 0x0559ebec5ff32670562feff2716b2193e59f0d223360ea29b595a0caaf14379d>' --network sepolia
@@ -59,10 +58,10 @@ Transaction Hash: 0x064c041d10ec1bf6a08b1d0ef8120bebbfda9ac5e4b576f61ffdcf612212
 
 
 //SEPOLIA
-node deploy.js upgrade 0x27c155c40a383b90ebd63eb1a36b10180c2c86bb4b4a48e71b3ed107b435c67
+node deploy.js upgrade 0x5b59880360a0c4e151f6a3ada459589ae82592d125e22ff6e4f9c0a77749c20
 
 
-node deploy.js set-vault-hash 0x63d2eca02aa243ae77c8caded5b538f462f6e618a0b79b50984f9e64e353cb3 --testnet
+node deploy.js set-vault-hash 0x44a81b154c0195938b3395903f94b5867862db9f0416b7ef15b7ee8769e99dc --testnet
 
 
 # ETH

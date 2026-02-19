@@ -272,7 +272,7 @@ mod ZionDefiCard {
 
         fn add_accepted_currency(ref self: ContractState, token: ContractAddress, sig_r: felt252, sig_s: felt252) {
             self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(!token.is_zero(), 'Invalid token');
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             assert(factory.is_token_accepted(token), 'Token not in factory');
@@ -287,14 +287,14 @@ mod ZionDefiCard {
 
         fn remove_accepted_currency(ref self: ContractState, token: ContractAddress, sig_r: felt252, sig_s: felt252) {
             self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self.is_currency_accepted.entry(token).write(false);
             self.emit(CurrencyRemoved { token, timestamp: get_block_timestamp() });
         }
 
         fn update_payment_mode(ref self: ContractState, new_mode: PaymentMode, sig_r: felt252, sig_s: felt252) {
             self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self.payment_mode.write(new_mode);
             self.emit(ConfigUpdated { key: 'payment_mode', timestamp: get_block_timestamp() });
         }
@@ -302,14 +302,14 @@ mod ZionDefiCard {
         fn set_slippage_tolerance(ref self: ContractState, tolerance_bps: u16, sig_r: felt252, sig_s: felt252) {
             self._assert_active();
             assert(tolerance_bps <= MAX_SLIPPAGE, 'Slippage too high');
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self.slippage_tolerance_bps.write(tolerance_bps);
             self.emit(ConfigUpdated { key: 'slippage', timestamp: get_block_timestamp() });
         }
 
         fn set_auto_approve_threshold(ref self: ContractState, threshold_usd: u256, sig_r: felt252, sig_s: felt252) {
             self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self.auto_approve_threshold_usd.write(threshold_usd);
             self.emit(ConfigUpdated { key: 'auto_approve', timestamp: get_block_timestamp() });
         }
@@ -323,7 +323,7 @@ mod ZionDefiCard {
             sig_s: felt252,
         ) {
             self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self.max_transaction_amount.write(max_tx_amount);
             self.daily_transaction_limit.write(daily_tx_limit);
             self.daily_spend_limit.write(daily_spend_limit);
@@ -345,7 +345,7 @@ mod ZionDefiCard {
         }
 
         fn set_token_price_feed(ref self: ContractState, token: ContractAddress, pair_id: felt252, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self.token_price_feed_ids.entry(token).write(pair_id);
         }
 
@@ -448,6 +448,9 @@ mod ZionDefiCard {
 
             if !self.merchant_interactions.entry(merchant).read() {
                 self.merchant_interactions.entry(merchant).write(true);
+
+                let current_count = self.merchant_count.read();
+                self.merchant_count.write(current_count + 1);
             }
 
             self.emit(PaymentRequestSubmitted { request_id, merchant, amount, token, is_recurring, timestamp: ts });
@@ -457,7 +460,7 @@ mod ZionDefiCard {
 
         fn approve_payment_request(ref self: ContractState, request_id: u64, sig_r: felt252, sig_s: felt252) {
             self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             self._check_approval_rate_limit();
 
             let mut req = self.payment_requests.entry(request_id).read();
@@ -475,7 +478,7 @@ mod ZionDefiCard {
 
         fn approve_multiple_requests(ref self: ContractState, request_ids: Span<u64>, sig_r: felt252, sig_s: felt252) {
             self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(request_ids.len() <= 10, 'Max 10 requests');
 
             let mut rl: u32 = 0;
@@ -505,7 +508,7 @@ mod ZionDefiCard {
         }
 
         fn reject_payment_request(ref self: ContractState, request_id: u64, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             let mut req = self.payment_requests.entry(request_id).read();
             assert(req.request_id != 0, 'Request not found');
             assert(req.status == RequestStatus::Pending, 'Not pending');
@@ -516,7 +519,7 @@ mod ZionDefiCard {
         }
 
         fn revoke_payment_approval(ref self: ContractState, request_id: u64, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             let mut req = self.payment_requests.entry(request_id).read();
             assert(req.request_id != 0, 'Request not found');
             assert(req.status == RequestStatus::Approved, 'Not approved');
@@ -612,7 +615,7 @@ mod ZionDefiCard {
         }
 
         fn cancel_settlement(ref self: ContractState, request_id: u64, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             let mut info = self.settlements.entry(request_id).read();
             assert(info.request_id != 0, 'No settlement');
             assert(!info.settled && !info.cancelled, 'Already finalised');
@@ -647,17 +650,15 @@ mod ZionDefiCard {
             let bal = self.token_balances.entry(token).read();
             assert(bal >= amount, 'Insufficient balance');
             
-            // Immediate deduction from tracked balance
             self.token_balances.entry(token).write(bal - amount); 
             
             let request_id = self.request_counter.read() + 1;
             self.request_counter.write(request_id);
             
             let ts = get_block_timestamp();
-            let delay = self.transfer_delay.read(); // User-adjustable delay
+            let delay = self.transfer_delay.read(); 
             let settle_at = ts + delay;
 
-            // Store as a settlement record to reuse existing infrastructure [cite: 319, 321]
             let transfer_info = SettlementInfo {
                 request_id,
                 amount_for_merchant: amount,
@@ -665,7 +666,7 @@ mod ZionDefiCard {
                 cashback: 0,
                 token,
                 payout_wallet: to,
-                merchant: self.owner.read(), // Using owner as the "merchant" for tracking
+                merchant: self.owner.read(),
                 settle_at,
                 settled: false,
                 cancelled: false,
@@ -722,33 +723,35 @@ mod ZionDefiCard {
 
         fn sync_balances(
             ref self: ContractState,
-            tokens: Span<ContractAddress>,
-            sig_r: felt252,
-            sig_s: felt252,
+            sig_r: felt252, 
+            sig_s: felt252
         ) {
             self.reentrancy.start();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin_relayer(sig_r, sig_s);
+            
             let card = get_contract_address();
             let ts = get_block_timestamp();
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
 
+            let count = self.currency_count.read();
             let mut i: u32 = 0;
+            
             loop {
-                if i >= tokens.len() { break; }
-                let token = *tokens.at(i);
+                if i >= count { break; }
+                
+                let token = self.accepted_currencies.entry(i).read();
                 let d = IERC20Dispatcher { contract_address: token };
                 let actual = d.balance_of(card);
                 let tracked = self.token_balances.entry(token).read();
 
                 if actual > tracked {
                     let surplus = actual - tracked;
-
-                    // Handle deployment fee from untracked deposits
                     if !self.deployment_fee_paid.read() {
                         let fee_usd = self.deployment_fee_usd.read();
                         if fee_usd > 0 {
                             let manual_id = self.token_price_feed_ids.entry(token).read();
                             let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, fee_usd, manual_id);
+                            
                             if fee_in_token > 0 && surplus >= fee_in_token {
                                 let config = factory.get_protocol_config();
                                 if d.transfer(config.admin_wallet, fee_in_token) {
@@ -761,21 +764,22 @@ mod ZionDefiCard {
                         }
                     }
 
-                    // Update tracked to actual (after any deployment fee deduction)
                     let new_actual = d.balance_of(card);
                     self.token_balances.entry(token).write(new_actual);
                 } else {
                     self.token_balances.entry(token).write(actual);
                 }
+                
                 self.last_balance_sync.entry(token).write(ts);
                 i += 1;
             };
+            
             self.reentrancy.end();
         }
 
         fn set_auto_swap(ref self: ContractState, source_token: ContractAddress, target_token: ContractAddress, sig_r: felt252, sig_s: felt252) {
             self._assert_active();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(!source_token.is_zero() && !target_token.is_zero(), 'Invalid token');
             assert(source_token != target_token, 'Same token');
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
@@ -795,7 +799,7 @@ mod ZionDefiCard {
         }
 
         fn remove_auto_swap(ref self: ContractState, source_token: ContractAddress, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(self.autoswap_enabled.entry(source_token).read(), 'No rule exists');
             self.autoswap_enabled.entry(source_token).write(false);
             self.autoswap_target.entry(source_token).write(Zero::zero());
@@ -814,7 +818,7 @@ mod ZionDefiCard {
         ) {
             self.reentrancy.start();
             self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(!sell_token.is_zero() && !buy_token.is_zero(), 'Invalid token');
             assert(sell_token != buy_token, 'Same token');
             assert(sell_amount > 0, 'Zero amount');
@@ -856,7 +860,7 @@ mod ZionDefiCard {
         ) {
             self.reentrancy.start();
             self._assert_not_frozen();
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             assert(self.autoswap_enabled.entry(source_token).read(), 'No auto-swap rule');
             let target_token = self.autoswap_target.entry(source_token).read();
             assert(!target_token.is_zero(), 'Invalid target');
@@ -900,7 +904,7 @@ mod ZionDefiCard {
         }
 
         fn freeze_card(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin(sig_r, sig_s);
             let status = self.status.read();
             assert(status != CardStatus::Frozen, 'Already frozen');
             assert(status != CardStatus::Burned, 'Card burned');
@@ -1021,6 +1025,72 @@ mod ZionDefiCard {
         }
 
         fn get_card_info(self: @ContractState) -> CardInfo {
+            let total_interactions = self.request_counter.read();
+            
+            // Payment Request Metrics
+            let mut total_requests_submitted: u64 = 0;
+            let mut pending_reqs: u64 = 0;
+            let mut approved_reqs: u64 = 0;
+            let mut rejected_reqs: u64 = 0;
+            let mut cancelled_reqs: u64 = 0;
+            let mut settled_reqs: u64 = 0;
+
+            // Recurring Metrics
+            let mut active_recurring: u64 = 0;
+            let mut inactive_recurring: u64 = 0;
+
+            // Transfer Metrics
+            let mut total_transfers_made: u64 = 0;
+            let mut pending_transfers: u64 = 0;
+            let mut cancelled_transfers: u64 = 0;
+
+            let mut i: u64 = 1;
+            loop {
+                if i > total_interactions { break; }
+                
+                let req = self.payment_requests.entry(i).read();
+                let stl = self.settlements.entry(i).read();
+                let status = self.request_status.entry(i).read();
+                
+                if req.request_id != 0 {
+                    // === IT IS A PAYMENT REQUEST ===
+                    total_requests_submitted += 1;
+                    
+                    if status == RequestStatus::Pending { 
+                        pending_reqs += 1; 
+                    } else if status == RequestStatus::Approved { 
+                        approved_reqs += 1; 
+                    } else if status == RequestStatus::Rejected { 
+                        rejected_reqs += 1; 
+                    } else if status == RequestStatus::Cancelled || status == RequestStatus::Revoked { 
+                        cancelled_reqs += 1; 
+                    } else if status == RequestStatus::Settled { 
+                        settled_reqs += 1; 
+                    }
+
+                    // Tally Recurring States
+                    if req.is_recurring {
+                        if status == RequestStatus::Approved || status == RequestStatus::AwaitingSettlement {
+                            active_recurring += 1;
+                        } else if status == RequestStatus::Cancelled || status == RequestStatus::Revoked || status == RequestStatus::Rejected {
+                            inactive_recurring += 1;
+                        }
+                    }
+                } else if stl.request_id != 0 {
+                    // === IT IS A DIRECT TRANSFER ===
+                    total_transfers_made += 1;
+                    
+                    if stl.cancelled {
+                        cancelled_transfers += 1;
+                    } else if !stl.settled {
+                        pending_transfers += 1;
+                    }
+                }
+
+                i += 1;
+            };
+
+            // Return the massive data payload
             CardInfo {
                 card_address: get_contract_address(),
                 owner: self.owner.read(),
@@ -1032,6 +1102,24 @@ mod ZionDefiCard {
                 slippage_tolerance_bps: self.slippage_tolerance_bps.read(),
                 auto_approve_threshold_usd: self.auto_approve_threshold_usd.read(),
                 total_currencies: self.currency_count.read(),
+                
+                // Analytics Payload
+                total_merchants: self.merchant_count.read(),
+                total_transactions: self.transaction_counter.read(),
+                
+                total_requests_submitted,
+                total_approved_requests: approved_reqs,
+                total_pending_requests: pending_reqs,
+                total_rejected_requests: rejected_reqs,
+                total_cancelled_requests: cancelled_reqs,
+                total_settled_requests: settled_reqs,
+                
+                total_active_recurring_payments: active_recurring,
+                total_inactive_recurring_payments: inactive_recurring,
+                
+                total_transfers_made,
+                total_pending_transfers: pending_transfers,
+                total_cancelled_transfers: cancelled_transfers,
             }
         }
 
@@ -1139,7 +1227,7 @@ mod ZionDefiCard {
             ref self: ContractState, sig_r: felt252, sig_s: felt252,
             start_ts: u64, end_ts: u64, offset: u64, limit: u8,
         ) -> TransactionSummary {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin_relayer(sig_r, sig_s);
             let cap = if limit > 100 { 100_u8 } else { limit };
             let total = self.transaction_counter.read();
             let mut spent: u256 = 0; let mut cb: u256 = 0; let mut fees: u256 = 0;
@@ -1166,7 +1254,7 @@ mod ZionDefiCard {
         }
 
         fn get_balance_summary(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin_relayer(sig_r, sig_s);
             let mut out = ArrayTrait::new();
             let count = self.currency_count.read();
             let mut i: u32 = 0;
@@ -1181,7 +1269,7 @@ mod ZionDefiCard {
         }
 
         fn get_fraud_alerts(ref self: ContractState, sig_r: felt252, sig_s: felt252) -> Span<FraudAlert> {
-            self._assert_owner_or_relayer_pin(sig_r, sig_s);
+            self._assert_owner_pin_relayer(sig_r, sig_s);
             let mut out = ArrayTrait::new();
             let total = self.fraud_alert_count.read();
             let mut i: u64 = 1;
@@ -1275,23 +1363,34 @@ mod ZionDefiCard {
         }
 
         #[inline(never)]
-        fn _assert_owner_or_relayer_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
+        fn _assert_owner_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
             self._check_lockout();
+            
             let caller = get_caller_address();
             let owner = self.owner.read();
-            assert(caller == owner || caller == self.authorized_relayer.read(), 'Unauthorized');
+            let relayer = self.authorized_relayer.read();
             
+            assert(caller == owner || caller == relayer, 'Unauthorized');
+
             self.pin._verify_pin(owner, sig_r, sig_s);
             self.failed_pin_attempts.write(0);
         }
 
         #[inline(never)]
-        fn _assert_owner_pin(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
+        fn _assert_owner_pin_relayer(ref self: ContractState, sig_r: felt252, sig_s: felt252) {
             self._check_lockout();
+            
+            let caller = get_caller_address();
             let owner = self.owner.read();
-            assert(get_caller_address() == owner, 'Not owner');
-            self.pin._verify_pin(owner, sig_r, sig_s);
-            self.failed_pin_attempts.write(0);
+            let relayer = self.authorized_relayer.read();
+            
+            assert(caller == owner || caller == relayer, 'Unauthorized');
+
+            //for user protection if keys are stolen
+            if caller == owner {
+                self.pin._verify_pin(owner, sig_r, sig_s);
+                self.failed_pin_attempts.write(0);
+            }
         }
 
         #[inline(never)]

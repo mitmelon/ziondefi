@@ -225,6 +225,28 @@ pub struct CardInfo {
     pub slippage_tolerance_bps: u16,
     pub auto_approve_threshold_usd: u256,
     pub total_currencies: u32,
+
+    //Comprehensive
+
+    pub total_merchants: u64,
+    pub total_transactions: u64,
+    
+    // Payment Requests
+    pub total_requests_submitted: u64,
+    pub total_approved_requests: u64,
+    pub total_pending_requests: u64,
+    pub total_rejected_requests: u64,
+    pub total_cancelled_requests: u64,
+    pub total_settled_requests: u64,
+    
+    // Recurring Payments
+    pub total_active_recurring_payments: u64,
+    pub total_inactive_recurring_payments: u64,
+    
+    // Transfers (Owner Withdrawals/Sends)
+    pub total_transfers_made: u64,
+    pub total_pending_transfers: u64,
+    pub total_cancelled_transfers: u64,
 }
 
 /// Result returned by `verify_owner_login`.
