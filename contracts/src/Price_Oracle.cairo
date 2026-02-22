@@ -42,7 +42,8 @@ fn MAINNET_WSTETH() -> ContractAddress { 0x042b8f0484674ca266ac5d08e4ac6a3fe65bd
 // --- SEPOLIA TOKENS ---
 fn SEPOLIA_ETH() -> ContractAddress { 0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7.try_into().unwrap() }
 fn SEPOLIA_STRK() -> ContractAddress { 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d.try_into().unwrap() }
-fn SEPOLIA_USDC() -> ContractAddress { 0x053b40a647cedfca6ca84f542a0fe36736031905a9639a7f19a3c1e66bfd5080.try_into().unwrap() }
+fn SEPOLIA_USDCE() -> ContractAddress { 0x053b40a647cedfca6ca84f542a0fe36736031905a9639a7f19a3c1e66bfd5080.try_into().unwrap() }
+fn SEPOLIA_USDC() -> ContractAddress { 0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343.try_into().unwrap() }
 
 // Errors
 const PRICE_STALE: felt252 = 'Oracle: Price Stale';
@@ -77,6 +78,7 @@ pub fn resolve_pair_id(token: ContractAddress) -> felt252 {
         if token == SEPOLIA_ETH() { return PAIR_ETH_USD; }
         if token == SEPOLIA_STRK() { return PAIR_STRK_USD; }
         if token == SEPOLIA_USDC() { return PAIR_USDC_USD; }
+        if token == SEPOLIA_USDCE() { return PAIR_USDC_USD; }
     }
 
     0 // Unknown Token

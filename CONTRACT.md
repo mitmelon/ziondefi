@@ -25,7 +25,7 @@ DECLARE CONTRACT
 
 Manual Gas 
 sncast --account=sepolia declare \
-  --contract-name ZionDefiFactory \
+  --contract-name ZionDefiCard \
   --network=sepolia \
   --l2-gas 5200000000 \
   --l2-gas-price 8000000000 \
@@ -34,7 +34,7 @@ sncast --account=sepolia declare \
   --l1-data-gas 500 \
   --l1-data-gas-price 3000000000000
 
-# Class Hash:        0x5d306c11ebeb026b94755fe656ac130896761020e248b6b40ea6178c6c85200
+# Class Hash:         0x1d9cc9d4dfdd40317381de661597867eae4ff01a02b9c2f6271b3730109b76b
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -60,8 +60,7 @@ Transaction Hash: 0x064c041d10ec1bf6a08b1d0ef8120bebbfda9ac5e4b576f61ffdcf612212
 //SEPOLIA
 node deploy.js upgrade 0x5b59880360a0c4e151f6a3ada459589ae82592d125e22ff6e4f9c0a77749c20
 
-
-node deploy.js set-vault-hash 0x5d306c11ebeb026b94755fe656ac130896761020e248b6b40ea6178c6c85200 --testnet
+node deploy.js set-vault-hash  0x1d9cc9d4dfdd40317381de661597867eae4ff01a02b9c2f6271b3730109b76b --testnet
 
 
 # ETH
@@ -71,7 +70,7 @@ node deploy.js add-token 0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b
 node deploy.js add-token 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab07201858f4287c938d 6004514686061859652 --testnet
 
 # USDC
-node deploy.js add-token 0x053b40a647cedfca6ca84f542a0fe36736031905a9639a7f19a3c1e66bfd5080 6148332971638477636 --testnet
+node deploy.js add-token 0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343 6148332971638477636 --testnet
 
 
 
