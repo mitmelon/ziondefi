@@ -203,9 +203,6 @@ pub struct TransactionSummary {
 /// Snapshot of rate-limit counters.
 #[derive(Drop, Serde)]
 pub struct RateLimitStatus {
-    pub is_locked: bool,
-    pub failed_attempts: u8,
-    pub lockout_until: u64,
     pub requests_submitted_last_hour: u8,
     pub approvals_last_hour: u8,
     pub last_charge_timestamp: u64,

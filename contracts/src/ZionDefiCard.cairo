@@ -984,7 +984,6 @@ mod ZionDefiCard {
             let now = get_block_timestamp();
             let last_charge = self.last_charge_timestamp.read();
             RateLimitStatus {
-                is_locked: now < lock_until,
                 requests_submitted_last_hour: 0,
                 approvals_last_hour: self.approval_count.read(),
                 last_charge_timestamp: last_charge,
