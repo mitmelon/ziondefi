@@ -24,7 +24,7 @@ mod ZionDefiCard {
         CardStatus, PaymentMode, RequestStatus, PaymentRequest, SettlementInfo,
         TransactionRecord, FraudAlert, TokenBalance, BalanceSummary,
         TransactionSummary, RateLimitStatus, CardInfo, CardConfig,
-        LoginResult, OffchainQuote,
+        OffchainQuote,
         CHARGE_COOLDOWN,
         MERCHANT_REQUEST_LIMIT, APPROVAL_LIMIT,
         RATE_LIMIT_WINDOW, MAX_SLIPPAGE, BASIS_POINTS, SECONDS_PER_DAY,
@@ -908,46 +908,6 @@ mod ZionDefiCard {
             self.reentrancy.end();
         }
 
-        fn pay_deployment_fee(ref self: ContractState, token: ContractAddress, sig_r: felt252, sig_s: felt252) {
-            self.reentrancy.start();
-            self._assert_owner_pin_relayer(sig_r, sig_s);
-            
-            assert(!self.deployment_fee_paid.read(), 'Fee already paid');
-            
-            let remaining_usd = self.deployment_fee_remaining_usd.read();
-            assert(remaining_usd > 0, 'No debt remaining');
-
-            let bal = self.token_balances.entry(token).read();
-            let manual_id = self.token_price_feed_ids.entry(token).read();
-            let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, remaining_usd, manual_id);
-            
-            assert(fee_in_token > 0, 'Price oracle error');
-            assert(bal >= fee_in_token, 'Insufficient token balance');
-
-            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
-            let config = factory.get_protocol_config();
-            let d = IERC20Dispatcher { contract_address: token };
-            
-            // Transfer the exact remaining debt to the admin
-            assert(d.transfer(config.admin_wallet, fee_in_token), 'Fee transfer failed');
-
-            // Update local state
-            self.token_balances.entry(token).write(bal - fee_in_token);
-            self.deployment_fee_remaining_usd.write(0);
-            self.deployment_fee_paid.write(true);
-            
-            // Upgrade the card status to Active
-            if self.status.read() == CardStatus::PendingActivation {
-                self.status.write(CardStatus::Active);
-            }
-
-            let ts = get_block_timestamp();
-            self.emit(DeploymentFeePaid { token, amount_in_token: fee_in_token, fee_usd: remaining_usd, timestamp: ts });
-            self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
-
-            self.reentrancy.end();
-        }
-
         fn get_accepted_currencies(self: @ContractState) -> Span<ContractAddress> {
             let count = self.currency_count.read();
             let mut out = ArrayTrait::new();
@@ -1169,6 +1129,47 @@ mod ZionDefiCard {
             };
             out.span()
         }
+
+        fn pay_deployment_fee(ref self: ContractState, token: ContractAddress, sig_r: felt252, sig_s: felt252) {
+            self.reentrancy.start();
+            self._assert_owner_pin_relayer(sig_r, sig_s);
+            
+            assert(!self.deployment_fee_paid.read(), 'Fee already paid');
+            
+            let remaining_usd = self.deployment_fee_remaining_usd.read();
+            assert(remaining_usd > 0, 'No debt remaining');
+
+            let bal = self.token_balances.entry(token).read();
+            let manual_id = self.token_price_feed_ids.entry(token).read();
+            let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, remaining_usd, manual_id);
+            
+            assert(fee_in_token > 0, 'Price oracle error');
+            assert(bal >= fee_in_token, 'Insufficient token balance');
+
+            let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
+            let config = factory.get_protocol_config();
+            let d = IERC20Dispatcher { contract_address: token };
+            
+            // Transfer the exact remaining debt to the admin
+            assert(d.transfer(config.admin_wallet, fee_in_token), 'Fee transfer failed');
+
+            // Update local state
+            self.token_balances.entry(token).write(bal - fee_in_token);
+            self.deployment_fee_remaining_usd.write(0);
+            self.deployment_fee_paid.write(true);
+            
+            // Upgrade the card status to Active
+            if self.status.read() == CardStatus::PendingActivation {
+                self.status.write(CardStatus::Active);
+            }
+
+            let ts = get_block_timestamp();
+            self.emit(DeploymentFeePaid { token, amount_in_token: fee_in_token, fee_usd: remaining_usd, timestamp: ts });
+            self.emit(CardActivated { owner: self.owner.read(), timestamp: ts });
+
+            self.reentrancy.end();
+        }
+    }
 
     // ====================================================================
 
