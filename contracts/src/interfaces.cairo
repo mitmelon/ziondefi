@@ -6,7 +6,7 @@ use starknet::{ContractAddress, ClassHash};
 use super::types::{
     PaymentMode, CardConfig, CardInfo, CardStatus, RateLimitStatus,
     PaymentRequest, RequestStatus, TransactionSummary,
-    BalanceSummary, FraudAlert, SettlementInfo, LoginResult,
+    BalanceSummary, FraudAlert, SettlementInfo,
     OffchainQuote, ProtocolConfig, MerchantReputation, MerchantInfo,
 };
 
@@ -47,7 +47,7 @@ pub trait IZionDefiCard<TContractState> {
     fn cancel_settlement(ref self: TContractState, request_id: u64, sig_r: felt252, sig_s: felt252);
 
     // ---- Funds Management --------------------------------------------------
-    fn sync_balances(ref self: TContractState, sig_r: felt252, sig_s: felt252);
+    fn pay_deployment_fee(ref self: TContractState, token: ContractAddress, sig_r: felt252, sig_s: felt252);
 
     // ---- Swap & Auto-Swap Management (owner/relayer + PIN) -----------------
     fn set_auto_swap(ref self: TContractState, source_token: ContractAddress, target_token: ContractAddress, sig_r: felt252, sig_s: felt252);
@@ -94,12 +94,9 @@ pub trait IZionDefiCard<TContractState> {
     fn get_transactions(self: @TContractState, offset: u64, limit: u8) -> Span<PaymentRequest>;
 
     // ---- PIN-protected views -----------------------------------------------
-    fn get_transaction_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252, start_ts: u64, end_ts: u64, offset: u64, limit: u8) -> TransactionSummary;
-    fn get_balance_summary(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> BalanceSummary;
-    fn get_fraud_alerts(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> Span<FraudAlert>;
-
-    // ---- dApp Owner Verification / Login -----------------------------------
-    fn verify_owner_login(ref self: TContractState, sig_r: felt252, sig_s: felt252) -> LoginResult;
+    fn get_transaction_summary(self: @TContractState, start_ts: u64, end_ts: u64, offset: u64, limit: u8) -> TransactionSummary;
+    fn get_balance_summary(self: @TContractState) -> BalanceSummary;
+    fn get_fraud_alerts(self: @TContractState) -> Span<FraudAlert>;
 
     fn transfer_funds(ref self: TContractState, token: ContractAddress, to: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252) -> u64;
     fn finalize_transfer(ref self: TContractState, transfer_id: u64);

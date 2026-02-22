@@ -25,7 +25,7 @@ DECLARE CONTRACT
 
 Manual Gas 
 sncast --account=sepolia declare \
-  --contract-name ZionDefiCard \
+  --contract-name ZionDefiFactory \
   --network=sepolia \
   --l2-gas 5200000000 \
   --l2-gas-price 8000000000 \
@@ -34,7 +34,7 @@ sncast --account=sepolia declare \
   --l1-data-gas 500 \
   --l1-data-gas-price 3000000000000
 
-# Class Hash:        0x44a81b154c0195938b3395903f94b5867862db9f0416b7ef15b7ee8769e99dc
+# Class Hash:        0x5d306c11ebeb026b94755fe656ac130896761020e248b6b40ea6178c6c85200
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -61,7 +61,7 @@ Transaction Hash: 0x064c041d10ec1bf6a08b1d0ef8120bebbfda9ac5e4b576f61ffdcf612212
 node deploy.js upgrade 0x5b59880360a0c4e151f6a3ada459589ae82592d125e22ff6e4f9c0a77749c20
 
 
-node deploy.js set-vault-hash 0x44a81b154c0195938b3395903f94b5867862db9f0416b7ef15b7ee8769e99dc --testnet
+node deploy.js set-vault-hash 0x5d306c11ebeb026b94755fe656ac130896761020e248b6b40ea6178c6c85200 --testnet
 
 
 # ETH
