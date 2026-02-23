@@ -34,7 +34,7 @@ sncast --account=sepolia declare \
   --l1-data-gas 500 \
   --l1-data-gas-price 3000000000000
 
-# Class Hash:         0x1d9cc9d4dfdd40317381de661597867eae4ff01a02b9c2f6271b3730109b76b
+# Class Hash:         0x7a41713ea7fe5722b76229e59809bb9fad14ce72246ef4c0461adddf9e4b1bf
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -60,7 +60,7 @@ Transaction Hash: 0x064c041d10ec1bf6a08b1d0ef8120bebbfda9ac5e4b576f61ffdcf612212
 //SEPOLIA
 node deploy.js upgrade 0x5b59880360a0c4e151f6a3ada459589ae82592d125e22ff6e4f9c0a77749c20
 
-node deploy.js set-vault-hash  0x1d9cc9d4dfdd40317381de661597867eae4ff01a02b9c2f6271b3730109b76b --testnet
+node deploy.js set-vault-hash  0x7a41713ea7fe5722b76229e59809bb9fad14ce72246ef4c0461adddf9e4b1bf --testnet
 
 
 # ETH
@@ -72,7 +72,12 @@ node deploy.js add-token 0x04718f5a0fc34cc1af16a1cdee98ffb20c31f5cd61d6ab0720185
 # USDC
 node deploy.js add-token 0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343 6148332971638477636 --testnet
 
+node deploy.js remove-token 0x0512feac6339ff7889822cb5aa2a86c848e9d392bb0e3e237c008674feed8343
+
 
 
 0xa98de9e9016bb6a9bfbc7ed3a9312eb7735532161a50eccf7de94a0125878c
 
+
+METAMASK
+0xB9e20aE45Cf40dF447000EAe256F605eEB8AC12A (USDC)

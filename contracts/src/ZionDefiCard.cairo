@@ -630,7 +630,13 @@ mod ZionDefiCard {
         // E. FUNDS MANAGEMENT
         // ================================================================
 
-        fn transfer_funds(ref self: ContractState, token: ContractAddress, to: ContractAddress, amount: u256, sig_r: felt252, sig_s: felt252
+        fn transfer_funds(
+            ref self: ContractState, 
+            token: ContractAddress, 
+            to: ContractAddress, 
+            amount: u256, 
+            sig_r: felt252, 
+            sig_s: felt252
         ) -> u64 {
             self.reentrancy.start();
             self._assert_not_frozen();
@@ -639,10 +645,18 @@ mod ZionDefiCard {
             assert(amount > 0, 'Zero amount');
             assert(!to.is_zero(), 'Invalid recipient');
             
-            let bal = self.token_balances.entry(token).read();
-            assert(bal >= amount, 'Insufficient balance');
+            let this_contract = get_contract_address();
+            let actual_bal = IERC20Dispatcher { contract_address: token }.balance_of(this_contract);
+            let tracked_bal = self.token_balances.entry(token).read();
             
-            self.token_balances.entry(token).write(bal - amount); 
+            if actual_bal > tracked_bal {
+                self.token_balances.entry(token).write(actual_bal);
+            }
+
+            let current_bal = self.token_balances.entry(token).read();
+            assert(current_bal >= amount, 'Insufficient balance');
+            
+            self.token_balances.entry(token).write(current_bal - amount); 
             
             let request_id = self.request_counter.read() + 1;
             self.request_counter.write(request_id);
@@ -669,6 +683,7 @@ mod ZionDefiCard {
             
             self.settlements.entry(request_id).write(transfer_info);
             self.request_status.entry(request_id).write(RequestStatus::AwaitingSettlement);
+            
             self._deduct_micro_debt(token, amount);
             
             self.reentrancy.end();
@@ -771,15 +786,30 @@ mod ZionDefiCard {
             assert(quote.buy_token_address == buy_token, 'Quote buy mismatch');
             assert(quote.sell_amount >= sell_amount, 'Quote sell < amount');
 
-            let bal = self.token_balances.entry(sell_token).read();
-            assert(bal >= quote.sell_amount, 'Insufficient balance');
-            self.token_balances.entry(sell_token).write(bal - quote.sell_amount);
+            let this_contract = get_contract_address();
+
+            let actual_sell_bal = IERC20Dispatcher { contract_address: sell_token }.balance_of(this_contract);
+            let tracked_sell_bal = self.token_balances.entry(sell_token).read();
+            if actual_sell_bal > tracked_sell_bal {
+                self.token_balances.entry(sell_token).write(actual_sell_bal);
+            }
+
+            let current_sell_bal = self.token_balances.entry(sell_token).read();
+            assert(current_sell_bal >= quote.sell_amount, 'Insufficient balance');
+            self.token_balances.entry(sell_token).write(current_sell_bal - quote.sell_amount);
+
+            let actual_buy_bal = IERC20Dispatcher { contract_address: buy_token }.balance_of(this_contract);
+            let tracked_buy_bal = self.token_balances.entry(buy_token).read();
+            if actual_buy_bal > tracked_buy_bal {
+                self.token_balances.entry(buy_token).write(actual_buy_bal);
+            }
 
             let config = factory.get_protocol_config();
             let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
             let credited = self._do_swap(config.avnu_router, sell_token, buy_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
-            let tracked = self.token_balances.entry(buy_token).read();
-            self.token_balances.entry(buy_token).write(tracked + credited);
+            
+            let synced_buy_bal = self.token_balances.entry(buy_token).read();
+            self.token_balances.entry(buy_token).write(synced_buy_bal + credited);
 
             let ts = get_block_timestamp();
             self.emit(SwapExecuted { token_in: sell_token, token_out: buy_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
@@ -808,16 +838,31 @@ mod ZionDefiCard {
             assert(quote.buy_token_address == target_token, 'Quote buy mismatch');
             assert(quote.sell_amount >= amount, 'Quote sell < amount');
 
-            let bal = self.token_balances.entry(source_token).read();
-            assert(bal >= quote.sell_amount, 'Insufficient balance');
-            self.token_balances.entry(source_token).write(bal - quote.sell_amount);
+            let this_contract = get_contract_address();
+
+            let actual_source_bal = IERC20Dispatcher { contract_address: source_token }.balance_of(this_contract);
+            let tracked_source_bal = self.token_balances.entry(source_token).read();
+            if actual_source_bal > tracked_source_bal {
+                self.token_balances.entry(source_token).write(actual_source_bal);
+            }
+
+            let current_source_bal = self.token_balances.entry(source_token).read();
+            assert(current_source_bal >= quote.sell_amount, 'Insufficient balance');
+            self.token_balances.entry(source_token).write(current_source_bal - quote.sell_amount);
+
+            let actual_target_bal = IERC20Dispatcher { contract_address: target_token }.balance_of(this_contract);
+            let tracked_target_bal = self.token_balances.entry(target_token).read();
+            if actual_target_bal > tracked_target_bal {
+                self.token_balances.entry(target_token).write(actual_target_bal);
+            }
 
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
             let min_out = quote.buy_amount - (quote.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
             let credited = self._do_swap(config.avnu_router, source_token, target_token, quote.sell_amount, quote.buy_amount, min_out, quote.fee.integrator_fees_bps, quote.routes);
-            let tracked = self.token_balances.entry(target_token).read();
-            self.token_balances.entry(target_token).write(tracked + credited);
+            
+            let synced_target_bal = self.token_balances.entry(target_token).read();
+            self.token_balances.entry(target_token).write(synced_target_bal + credited);
 
             let ts = get_block_timestamp();
             self.emit(SwapExecuted { token_in: source_token, token_out: target_token, amount_in: quote.sell_amount, amount_out: credited, timestamp: ts });
@@ -867,37 +912,47 @@ mod ZionDefiCard {
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
 
-
+            let this_contract = get_contract_address();
             let burn_fee_usd = config.burn_fee;
             let mut fee_paid = false;
             let count = self.currency_count.read();
+            
             let mut i: u32 = 0;
             loop {
                 if i >= count || fee_paid { break; }
                 let token = self.accepted_currencies.entry(i).read();
-                let bal = self.token_balances.entry(token).read();
+                
+                let d = IERC20Dispatcher { contract_address: token };
+                let real_bal = d.balance_of(this_contract);
+                
                 let manual_id = self.token_price_feed_ids.entry(token).read();
                 let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, burn_fee_usd, manual_id);
-                if fee_in_token > 0 && bal >= fee_in_token {
-                    let d = IERC20Dispatcher { contract_address: token };
+                
+                if fee_in_token > 0 && real_bal >= fee_in_token {
                     if d.transfer(config.admin_wallet, fee_in_token) {
-                        self.token_balances.entry(token).write(bal - fee_in_token);
+                        let tracked_bal = self.token_balances.entry(token).read();
+                        if tracked_bal >= fee_in_token {
+                            self.token_balances.entry(token).write(tracked_bal - fee_in_token);
+                        } else {
+                            self.token_balances.entry(token).write(0);
+                        }
                         fee_paid = true;
                     }
                 }
                 i += 1;
             };
             assert(fee_paid, 'No balance for burn fee');
-
             let mut j: u32 = 0;
             loop {
                 if j >= count { break; }
                 let token = self.accepted_currencies.entry(j).read();
-                let bal = self.token_balances.entry(token).read();
-                if bal > 0 {
+                
+                let d = IERC20Dispatcher { contract_address: token };
+                let real_bal = d.balance_of(this_contract);
+                
+                if real_bal > 0 {
                     self.token_balances.entry(token).write(0);
-                    let d = IERC20Dispatcher { contract_address: token };
-                    d.transfer(owner, bal);
+                    d.transfer(owner, real_bal);
                 }
                 j += 1;
             };
@@ -1107,13 +1162,23 @@ mod ZionDefiCard {
             let mut out = ArrayTrait::new();
             let count = self.currency_count.read();
             let mut i: u32 = 0;
+            
+            let this_contract = get_contract_address(); 
+
             loop {
                 if i >= count { break; }
                 let token = self.accepted_currencies.entry(i).read();
-                let bal = self.token_balances.entry(token).read();
-                out.append(TokenBalance { token, balance: bal, last_updated: self.last_balance_sync.entry(token).read() });
+                let erc20_dispatcher = IERC20Dispatcher { contract_address: token };
+                let real_bal = erc20_dispatcher.balance_of(this_contract);
+                out.append(TokenBalance { 
+                    token, 
+                    balance: real_bal,
+                    last_updated: self.last_balance_sync.entry(token).read() 
+                });
+                
                 i += 1;
             };
+            
             BalanceSummary { balances: out.span(), total_value_usd: 0 }
         }
 
@@ -1138,26 +1203,32 @@ mod ZionDefiCard {
             let remaining_usd = self.deployment_fee_remaining_usd.read();
             assert(remaining_usd > 0, 'No debt remaining');
 
-            let bal = self.token_balances.entry(token).read();
+            let this_contract = get_contract_address();
+
+            let actual_bal = IERC20Dispatcher { contract_address: token }.balance_of(this_contract);
+            let tracked_bal = self.token_balances.entry(token).read();
+            if actual_bal > tracked_bal {
+                self.token_balances.entry(token).write(actual_bal);
+            }
+
+            let current_bal = self.token_balances.entry(token).read();
+            
             let manual_id = self.token_price_feed_ids.entry(token).read();
             let fee_in_token = Price_Oracle::convert_usd_to_token_auto(token, remaining_usd, manual_id);
             
             assert(fee_in_token > 0, 'Price oracle error');
-            assert(bal >= fee_in_token, 'Insufficient token balance');
+            assert(current_bal >= fee_in_token, 'Insufficient token balance');
 
             let factory = IZionDefiFactoryDispatcher { contract_address: self.factory.read() };
             let config = factory.get_protocol_config();
             let d = IERC20Dispatcher { contract_address: token };
             
-            // Transfer the exact remaining debt to the admin
             assert(d.transfer(config.admin_wallet, fee_in_token), 'Fee transfer failed');
 
-            // Update local state
-            self.token_balances.entry(token).write(bal - fee_in_token);
+            self.token_balances.entry(token).write(current_bal - fee_in_token);
             self.deployment_fee_remaining_usd.write(0);
             self.deployment_fee_paid.write(true);
             
-            // Upgrade the card status to Active
             if self.status.read() == CardStatus::PendingActivation {
                 self.status.write(CardStatus::Active);
             }
@@ -1276,10 +1347,15 @@ mod ZionDefiCard {
         fn _has_any_balance(self: @ContractState) -> bool {
             let count = self.currency_count.read();
             let mut i: u32 = 0;
+            let this_contract = get_contract_address();
+
             loop {
                 if i >= count { break false; }
                 let t = self.accepted_currencies.entry(i).read();
-                if self.token_balances.entry(t).read() > 0 { break true; }
+                let d = IERC20Dispatcher { contract_address: t };
+                let real_bal = d.balance_of(this_contract);
+                
+                if real_bal > 0 { break true; }
                 i += 1;
             }
         }
@@ -1289,14 +1365,26 @@ mod ZionDefiCard {
             if mode == PaymentMode::MerchantTokenOnly {
                 return target;
             }
-            let direct = self.token_balances.entry(target).read();
-            if direct >= amount { return target; }
+            
+            let this_contract = get_contract_address();
+            
+            let target_d = IERC20Dispatcher { contract_address: target };
+            let direct_real = target_d.balance_of(this_contract);
+            
+            if direct_real >= amount { 
+                return target; 
+            }
+            
             let count = self.currency_count.read();
             let mut i: u32 = 0;
             loop {
                 if i >= count { break; }
                 let t = self.accepted_currencies.entry(i).read();
-                if self.token_balances.entry(t).read() > 0 { return t; }
+                
+                let d = IERC20Dispatcher { contract_address: t };
+                let real_bal = d.balance_of(this_contract);
+                
+                if real_bal > 0 { return t; }
                 i += 1;
             };
             panic(array!['No balance'])
@@ -1359,6 +1447,8 @@ mod ZionDefiCard {
             let swap_needed = source_token != req.token;
             let mut swap_fee: u256 = 0;
             let mut final_token_in = source_token;
+            
+            let this_contract = get_contract_address();
 
             if swap_needed {
                 assert(quote.is_some(), 'Quote required');
@@ -1367,9 +1457,15 @@ mod ZionDefiCard {
                 assert(q.sell_token_address == source_token, 'Quote input mismatch');
                 assert(q.buy_amount >= req.amount, 'Insufficient quote output');
 
-                let sell_bal = self.token_balances.entry(source_token).read();
-                assert(sell_bal >= q.sell_amount, 'Insufficient balance');
-                self.token_balances.entry(source_token).write(sell_bal - q.sell_amount);
+                let actual_sell_bal = IERC20Dispatcher { contract_address: source_token }.balance_of(this_contract);
+                let tracked_sell_bal = self.token_balances.entry(source_token).read();
+                if actual_sell_bal > tracked_sell_bal {
+                    self.token_balances.entry(source_token).write(actual_sell_bal);
+                }
+
+                let current_sell_bal = self.token_balances.entry(source_token).read();
+                assert(current_sell_bal >= q.sell_amount, 'Insufficient balance');
+                self.token_balances.entry(source_token).write(current_sell_bal - q.sell_amount);
 
                 let config = factory.get_protocol_config();
                 let slippage_adjusted = q.buy_amount - (q.buy_amount * slippage_tolerance_bps.into() / BASIS_POINTS);
@@ -1379,8 +1475,7 @@ mod ZionDefiCard {
                 swap_fee = q.fee.avnu_fees;
                 final_token_in = source_token;
 
-                let card = get_contract_address();
-                let actual_out = IERC20Dispatcher { contract_address: req.token }.balance_of(card);
+                let actual_out = IERC20Dispatcher { contract_address: req.token }.balance_of(this_contract);
                 let existing_tracked = self.token_balances.entry(req.token).read();
                 assert(actual_out >= existing_tracked + req.amount, 'Swap output insufficient');
 
@@ -1391,9 +1486,15 @@ mod ZionDefiCard {
 
                 self.emit(SwapExecuted { token_in: source_token, token_out: req.token, amount_in: q.sell_amount, amount_out: q.buy_amount, timestamp: ts });
             } else {
-                let bal = self.token_balances.entry(req.token).read();
-                assert(bal >= req.amount, 'Insufficient balance');
-                self.token_balances.entry(req.token).write(bal - req.amount);
+                let actual_bal = IERC20Dispatcher { contract_address: req.token }.balance_of(this_contract);
+                let tracked_bal = self.token_balances.entry(req.token).read();
+                if actual_bal > tracked_bal {
+                    self.token_balances.entry(req.token).write(actual_bal);
+                }
+
+                let current_bal = self.token_balances.entry(req.token).read();
+                assert(current_bal >= req.amount, 'Insufficient balance');
+                self.token_balances.entry(req.token).write(current_bal - req.amount);
             }
 
             let config = factory.get_protocol_config();
@@ -1504,7 +1605,7 @@ mod ZionDefiCard {
                 }
             }
 
-            factory.update_merchant_reputation(req_merchant, get_contract_address(), req_amount, true);
+            factory.update_merchant_reputation(req_merchant, this_contract, req_amount, true);
 
             self.emit(CardCharged {
                 request_id, merchant: req_merchant, amount: req_amount,
