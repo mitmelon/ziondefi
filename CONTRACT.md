@@ -34,7 +34,7 @@ sncast --account=sepolia declare \
   --l1-data-gas 500 \
   --l1-data-gas-price 3000000000000
 
-# Class Hash:         0x7a41713ea7fe5722b76229e59809bb9fad14ce72246ef4c0461adddf9e4b1bf
+# Class Hash:         0x5205078675208b9b925e57f05277a5216a9d18444e40d152a483420db9f7550
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -60,7 +60,7 @@ Transaction Hash: 0x064c041d10ec1bf6a08b1d0ef8120bebbfda9ac5e4b576f61ffdcf612212
 //SEPOLIA
 node deploy.js upgrade 0x5b59880360a0c4e151f6a3ada459589ae82592d125e22ff6e4f9c0a77749c20
 
-node deploy.js set-vault-hash  0x7a41713ea7fe5722b76229e59809bb9fad14ce72246ef4c0461adddf9e4b1bf --testnet
+node deploy.js set-vault-hash  0x5205078675208b9b925e57f05277a5216a9d18444e40d152a483420db9f7550 --testnet
 
 
 # ETH

@@ -1,7 +1,7 @@
 # Directories
 node_modules/
 public/
-src/
+src/views/
 secrets/
 storage/
 template/
@@ -18,10 +18,8 @@ site.webmanifes
 .DS_Store
 zion.code-workspace
 package-lock.json
-server.js
 game.html
-tailwind.config.js
-package.json
+index.html
 example.js
 deploy.js
 CONTRACT.md
